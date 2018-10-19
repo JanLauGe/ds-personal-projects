@@ -1,0 +1,199 @@
+---
+title: "Bus Claims Dashboard"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+---
+
+```{r setup, include=FALSE}
+  library(dplyr)
+  library(reshape2)
+  library(lubridate)
+  library(plotly)
+  
+  library(flexdashboard)
+
+  #Global variables
+  wd <- gsub("R Progs/", "", paste0(getwd(), "/"))
+  input <- paste0(wd, "Data/")
+  output <- paste0(wd, "R Output/")
+
+
+  #Import graph datasets
+  filename <- paste0(output, "claimsYear.csv")
+  claimsYear <- read.csv(filename, stringsAsFactors = FALSE)
+  
+  filename <- paste0(output, "claimsMonthYear.csv")
+  claimsMonthYear <- read.csv(filename, stringsAsFactors = FALSE)
+
+  filename <- paste0(output, "claimType.csv")
+  claimType <- read.csv(filename, stringsAsFactors = FALSE)
+  
+  filename <- paste0(output, "faultType.csv")
+  faultType <- read.csv(filename, stringsAsFactors = FALSE)
+
+  filename <- paste0(output, "collisionType.csv")
+  collisionType <- read.csv(filename, stringsAsFactors = FALSE)
+  
+  filename <- paste0(output, "collisionTypeFault.csv")
+  collisionTypeFault <- read.csv(filename, stringsAsFactors = FALSE)
+
+  filename <- paste0(output, "routeRecent.csv")
+  routeRecent <- read.csv(filename, stringsAsFactors = FALSE)
+
+  filename <- paste0(output, "routeFault.csv")
+  routeFault <- read.csv(filename, stringsAsFactors = FALSE)
+
+```
+
+Row 
+-----------------------------------------------------------------------
+
+### Claims per year
+
+```{r}
+
+  graphData <- claimsYear
+  plot_ly(graphData, x=accidentYear, y=claims, type="bar") %>%
+    layout(xaxis=list(title=""))
+
+```
+
+### Claims per month
+
+```{r}
+
+  graphData <- claimsMonthYear
+  plot_ly(graphData, x=accidentMonthYear, y=claims, type="scatter") %>%
+    layout(xaxis=list(title=""))
+
+```
+
+Row 
+-----------------------------------------------------------------------
+
+### Monthly claims from Jan 2013
+
+```{r}
+
+  graphData <- claimsMonthYear %>%
+    filter(accidentYear >= 2013)
+  plot_ly(graphData, x=accidentMonth, y=claims, group=accidentYear, type="scatter") %>%
+    layout(xaxis=list(title="month"))
+
+```
+
+### Monthly claims index from Jan 2013
+
+```{r}
+
+  graphData <- claimsMonthYear %>%
+    filter(accidentYear >= 2013)
+  plot_ly(graphData, x=accidentMonth, y=indexMonthly, group=accidentYear, type="scatter") %>%
+    layout(xaxis=list(title="month"))
+
+```
+
+
+Row 
+-----------------------------------------------------------------------
+
+### Claim Types from Jan 2015
+
+```{r}
+
+  graphData <- claimType %>%
+    arrange(nClaims)
+  plot_ly(graphData, y=Accident.Descrip, x=pctClaims, 
+          type="bar", orientation="h") %>%
+    layout(yaxis=list(title=""),
+           xaxis=list(title="% Claims"),
+           margins=list(l=100))
+
+```
+
+### Claim Fault Types from Jan 2015
+
+```{r}
+
+  graphData <- faultType %>%
+    arrange(nClaims)
+  plot_ly(graphData, y=Fault.Descrip, x=pctClaims, 
+          type="bar", orientation="h") %>%
+    layout(yaxis=list(title=""),
+           xaxis=list(title="% Claims"),
+           margins=list(l=150))
+
+
+```
+
+Row 
+-----------------------------------------------------------------------
+
+### Collision Type since Jan 2015
+
+```{r}
+
+  graphData <- collisionType %>%
+    arrange(nClaims)
+  plot_ly(graphData, y=Collision.Description, x=pctClaims, 
+          type="bar", orientation="h") %>%
+    layout(yaxis=list(title=""),
+           xaxis=list(title="% Collisions"),
+           margins=list(l=150))
+
+```
+
+### Collision Type x Fault since Jan 2015
+
+```{r}
+
+  graphData <- collisionTypeFault
+  plot_ly(graphData, x=nClaims, y=Collision.Description, color=Fault.Descrip, type="bar",
+          orientation="h") %>%
+    layout(barmode="stack",
+           hovermode="closest",
+           margins=list(l=150),
+           yaxis=list(title=""),
+           xaxis=list(title="Claims"))
+
+```
+
+
+Row 
+-----------------------------------------------------------------------
+
+### Top routes by claim since Jan 2015
+
+```{r}
+
+  graphData <- routeRecent  %>%
+    filter(rank <= 20) %>%
+    mutate(bus=paste0("R", routeNo))
+  
+  plot_ly(graphData, x=bus, y=nClaims, type="bar") %>%
+    layout(xaxis=list(title=""),
+           yaxis=list(title="Claims"),
+           margins=list(b=50))
+
+
+```
+
+### Route Fault Type- Top routes by claim since Jan 2015
+
+```{r}
+
+  graphData <- routeFault %>%
+    mutate(bus=paste0("R", routeNo))
+  plot_ly(graphData, x=bus, y=nClaims, color=Fault.Descrip, type="bar") %>%
+    layout(barmode="stack",
+           xaxis=list(title=""),
+           yaxis=list(title="Claims"),
+           margins=list(b=50))
+
+
+```
+
+
+

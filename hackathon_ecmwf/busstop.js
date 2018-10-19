@@ -1,0 +1,1 @@
+var Busstop ='{"busstop":[{"location_code":"030054120001","bay_no":"","description":"Murdochs adj","latitude":"51.442550","longitude":"-1.044430","route_code":"1","operator_code":"RGB","routes":"F20\/1","bearing":"90","group_name":"Jet Black"}]}';

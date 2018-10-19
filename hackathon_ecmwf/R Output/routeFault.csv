@@ -1,0 +1,82 @@
+"","routeNo","Fault.Descrip","nClaims"
+"1","0000","at fault",37
+"2","0000","insufficient information",6
+"3","0000","no knowledge",3
+"4","0000","not at fault",12
+"5","0001","at fault",11
+"6","0001","insufficient information",2
+"7","0001","no knowledge",2
+"8","0001","not at fault",13
+"9","0002","",1
+"10","0002","at fault",10
+"11","0002","insufficient information",2
+"12","0002","no knowledge",1
+"13","0002","not at fault",6
+"14","0002","partial fault",1
+"15","0003","",1
+"16","0003","at fault",24
+"17","0003","insufficient information",5
+"18","0003","no knowledge",3
+"19","0003","not at fault",21
+"20","0003","partial fault",1
+"21","0004","at fault",10
+"22","0004","insufficient information",3
+"23","0004","not at fault",22
+"24","0005","at fault",13
+"25","0005","insufficient information",5
+"26","0005","no knowledge",1
+"27","0005","not at fault",13
+"28","0006","",1
+"29","0006","at fault",14
+"30","0006","insufficient information",1
+"31","0006","not at fault",16
+"32","0009","at fault",8
+"33","0009","insufficient information",4
+"34","0009","no knowledge",1
+"35","0009","not at fault",7
+"36","0013","at fault",5
+"37","0013","insufficient information",1
+"38","0013","not at fault",11
+"39","0013","partial fault",1
+"40","0015","at fault",11
+"41","0015","insufficient information",2
+"42","0015","not at fault",8
+"43","0016","at fault",7
+"44","0016","insufficient information",1
+"45","0016","no knowledge",1
+"46","0016","not at fault",12
+"47","0016","partial fault",1
+"48","0017","at fault",26
+"49","0017","insufficient information",6
+"50","0017","no knowledge",2
+"51","0017","not at fault",55
+"52","0021","at fault",21
+"53","0021","insufficient information",2
+"54","0021","not at fault",11
+"55","0022","at fault",9
+"56","0022","insufficient information",1
+"57","0022","no knowledge",1
+"58","0022","not at fault",8
+"59","0024","at fault",6
+"60","0024","insufficient information",3
+"61","0024","not at fault",18
+"62","0024","partial fault",1
+"63","0026","at fault",8
+"64","0026","insufficient information",3
+"65","0026","no knowledge",1
+"66","0026","not at fault",19
+"67","0026","partial fault",2
+"68","0033","at fault",9
+"69","0033","insufficient information",4
+"70","0033","not at fault",17
+"71","00X4","",1
+"72","00X4","at fault",6
+"73","00X4","insufficient information",2
+"74","00X4","not at fault",8
+"75","019A","at fault",21
+"76","019A","insufficient information",2
+"77","019A","not at fault",5
+"78","019C","at fault",14
+"79","019C","insufficient information",3
+"80","019C","not at fault",4
+"81","019C","partial fault",1

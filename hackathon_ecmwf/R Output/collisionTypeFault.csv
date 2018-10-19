@@ -1,0 +1,51 @@
+"","Collision.Description","Fault.Descrip","nClaims"
+"1","","insufficient information",3
+"2","","not at fault",11
+"3","","partial fault",1
+"4","Adult","at fault",6
+"5","Adult","insufficient information",11
+"6","Adult","not at fault",20
+"7","Adult","partial fault",1
+"8","Animal","at fault",1
+"9","Animal","insufficient information",1
+"10","Animal","not at fault",3
+"11","Articulated Lorry","at fault",1
+"12","Articulated Lorry","insufficient information",1
+"13","Bicycle","at fault",2
+"14","Bicycle","not at fault",3
+"15","Bus","at fault",14
+"16","Bus","not at fault",7
+"17","Canopy","at fault",1
+"18","Child","at fault",1
+"19","Child","insufficient information",1
+"20","Child","not at fault",5
+"21","Child","partial fault",1
+"22","Child","vehicle defect",1
+"23","Crash barrier","at fault",2
+"24","Fencings","at fault",11
+"25","Motor","",5
+"26","Motor","at fault",181
+"27","Motor","insufficient information",35
+"28","Motor","no knowledge",23
+"29","Motor","not at fault",216
+"30","Motor","partial fault",6
+"31","Other","at fault",112
+"32","Other","insufficient information",8
+"33","Other","not at fault",37
+"34","Other","partial fault",1
+"35","Pillar / Lamppost","at fault",33
+"36","Private car","",2
+"37","Private car","at fault",36
+"38","Private car","insufficient information",13
+"39","Private car","not at fault",49
+"40","Private car","partial fault",4
+"41","Pump","at fault",1
+"42","Road Sign","",1
+"43","Road Sign","at fault",5
+"44","Taxi","at fault",6
+"45","Taxi","not at fault",3
+"46","Truck","at fault",1
+"47","Valuables","at fault",1
+"48","Van","at fault",5
+"49","Van","insufficient information",1
+"50","Van","not at fault",2

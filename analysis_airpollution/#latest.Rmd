@@ -1,0 +1,440 @@
+---
+title: "ECMWF kaggle competition"
+author: "Laurens Geffert"
+date: "23 April 2017"
+output: html_document
+---
+
+
+```{R Setup}
+
+# Setup
+library(devtools)
+library(tidyverse)
+library(magrittr)
+library(stringr)
+library(lubridate)
+library(caret)
+library(xgboost)
+
+
+set.seed(12345)
+session_info()
+
+```
+
+
+Load the data and create some derived time variables from the date (weekday, month, year). Also, change the region label to a more convenient formatting.
+
+```{R Data_Loading}
+
+# Load data
+# setwd('C:/local/ecmwf/')
+train_raw <- read_csv('data/train.csv',
+                      na = c('', 'NA'),
+                      col_types = 'icDdddddd') %>%
+  cbind(set = 'train')
+
+test_raw <- read_csv('data/test.csv',
+                     na = c('', 'NA'),
+                     col_types = c('icDddddd')) %>%
+  cbind(set = 'test', mortality_rate = NA)
+
+# Transformation
+dat_full <- rbind(train_raw, test_raw) %>%
+  # Get time variables
+  mutate(weekday = weekdays(date) %>%
+                   factor(levels = c("Monday",
+                                     "Tuesday",
+                                     "Wednesday",
+                                     "Thursday",
+                                     "Friday",
+                                     "Saturday",
+                                     "Sunday")),
+         month = month(date, label = TRUE),
+         year = year(date),
+         # Count variables, we will need these later
+         n_day = yday(date),
+         n_year = year - min(year),
+         # Reformat region labels
+         region = str_replace(region, 
+                              pattern = 'E1200000',
+                              replacement = 'R'))
+
+train_clean <- dat_full %>%
+  filter(set == 'train')
+
+### Get lead days!
+
+### Get gliding window averages
+
+### Use long-term trend
+
+### Try prophet to forecast data time series?
+
+```
+
+
+```{R Data_Exploration1}
+
+# What have we got?
+glimpse(dat_full)
+# Which ones are the pollutant variables?
+pollutants <- c('O3', 'PM10', 'PM25', 'NO2', 'T2M')
+
+```
+
+
+The plot below shows observed mortality and pollutant concentrations per day by region. We can see that values vary between regions, with R7 having lower mortality but higher pollutant concentration. This illustrates that pollutants are certainly not the only factor influencing mortality rates. We can also see that there is a strong seasonal pattern to the data, with high mortality rates in winter. We can also see that the overall trend seems to be a decrease in mortality. Furthermore, some values are missing, particularly from the NO2 series.
+
+```{R Data_Exploration2}
+
+# Plot pollutants over time
+train_clean %>%
+  select(one_of(pollutants), mortality_rate, date, region) %>%
+  gather(key = metric, value = measurement, -date, -region) %>%
+  ggplot(aes(x = date, 
+             y = measurement, 
+             group = interaction(metric, region), 
+             colour = metric)) +
+  geom_path() +
+  facet_grid(metric ~ region, scales = 'free_y')
+
+```
+
+
+In the plot below we show values aggregated by day of the week, to check for weekly patterns. It seems that NO2 and PM10 tend to be a little bit lower on Saturdays and Sundays, while O3 tends to be higher. This, however, does not seem to be resulting in higher mortality rates on those days. Perhaps aggregated lead time pollution is more important than on-the-day measurements?
+
+```{R Data_Exploration3}
+
+# Plot by day of the week
+train_clean %>%
+  select(one_of(pollutants), mortality_rate, weekday, region) %>%
+  gather(key = metric, value = measurement, -weekday, -region) %>%
+  ggplot(aes(x = weekday, 
+             y = measurement, 
+             fill = metric)) +
+  geom_boxplot() +
+  facet_grid(metric ~ region, scales = 'free_y')
+
+```
+
+
+Let's try to find the overall trend in mortality. From the plot below we can see that mean annual mortality decreases across regions from year to year (with the exception of the last year).
+
+```{R Data_Exploration4}
+
+# Find overall trend
+ann_mor_data <- train_clean %>%
+  mutate(n_year = year - min(year)) %>%
+  group_by(region, n_year) %>%
+  dplyr::summarise(mortality_mean_annual = mean(mortality_rate)) %>%
+  ungroup
+
+# Plot it by region
+ann_mor_data %>%
+  ggplot(aes(x = n_year, y = mortality_mean_annual, group = region)) +
+  geom_path()
+
+```
+
+
+Do we see a similar trend in the pollutant measurements? From the plot below it seems that their concentration is stable or decreasing. It should therefore be safe to use the overall trend in mortality as a correcting factor without compromising our signal from pollutant concentrations.
+
+```{R Data_Exploration5}
+
+# Find overall trend
+ann_pol_data <- train_clean %>%
+  select(one_of(pollutants), year, region) %>%
+  mutate(year = year - min(year)) %>%
+  group_by(region, year) %>%
+  dplyr::summarise_all(funs('mean')) %>%
+  ungroup
+
+# Plot it by region and pollutant
+ann_pol_data %>%
+  gather(key = 'pollutant', value = 'measurement', -region, -year) %>%
+  ggplot(aes(x = year, y = measurement, group = pollutant, colour = pollutant)) +
+  geom_path() + facet_wrap(~region)
+
+```
+
+
+So we will try to model the overall trend across years and add that to the model to account for things such as changes in lifestyle, demographics, and medical technology. Using a linear model with years as input we will be able to calculate values for future years.
+
+```{R Data_Manipulation1}
+
+# Fit a linear model
+ann_mor_model <- ann_mor_data %>%
+  lm(formula = mortality_mean_annual ~ n_year)
+
+# Generate some fake new data for testing
+ann_mor_newdata <- data.frame(
+  n_year = c(0,1,2,3,4,5,6,7))
+
+# Predict mean mortality of future years
+ann_mor_prediction <- predict(ann_mor_model, newdata = ann_mor_newdata)
+ann_mor_prediction <- cbind(ann_mor_newdata, mortality_mean_annual = ann_mor_prediction)
+
+# Plot it together with actual data
+ann_mor_data %>%
+  ggplot(aes(x = n_year, y = mortality_mean_annual, group = region)) +
+  geom_path() +
+  geom_path(data = ann_mor_prediction, col = 'red')
+
+# Bind to annual prediction
+dat_full <- dat_full %>%
+  dplyr::left_join(ann_mor_prediction, by = 'n_year')
+
+```
+
+
+```{R Data_Manipulation2}
+
+dat_full <- dat_full %>%
+  group_by(region) %>%
+  mutate(mortality_mean_regional = mean(mortality_rate, na.rm = TRUE)) %>%
+  ungroup
+
+```
+
+
+We saw earlier that a lot of values are missing, so we will try to impute them from the rest of the dataset.
+
+```{R Data_Manipulation3}
+
+train_impute <- train_clean
+# ### Not good enough yet!
+# ### Should be by region
+# ### and should include ARIMA prediction for seasonality
+# 
+# # Impute missing values
+# train_impute <- train_clean %>%
+#   group_by(region, weekday, month) %>%
+#   mutate(mean_PM25 = mean(PM25, na.rm = TRUE),
+#          mean_PM10 = mean(PM10, na.rm = TRUE),
+#          mean_NO2 = mean(NO2, na.rm = TRUE),
+#          mean_O3 = mean(O3, na.rm = TRUE)) %>%
+#   ungroup() %>%
+#   mutate(PM25 = ifelse(is.na(PM25), mean_PM25, PM25),
+#          PM10 = ifelse(is.na(PM10), mean_PM10, PM10),
+#          NO2 = ifelse(is.na(NO2), mean_NO2, NO2),
+#          O3 = ifelse(is.na(O3), mean_O3, O3))%>%
+#   select(-mean_PM25, -mean_PM10, -mean_NO2, -mean_O3)
+# 
+# # And plot over time by region again
+# train_impute %>%
+#   select(one_of(pollutants), mortality_rate, date, region) %>%
+#   gather(key = metric, value = measurement, -date, -region) %>%
+#   ggplot(aes(x = date, 
+#              y = measurement, 
+#              group = interaction(metric, region), 
+#              colour = metric)) +
+#   geom_path() +
+#   facet_grid(metric ~ region, scales = 'free_y')
+
+```
+
+```{R Data_Manipulation4}
+
+### Needs fleshing out as well, let's try different lag windows
+
+# # Get lagged averages
+# train_impute %>%
+#   group_by(region) %>%
+#   arrange(date) %>%
+#   mutate(predate = lag(O3, k = 3)) %>%
+#   ungroup()
+
+```
+
+
+We create a forecast for the mortality time series, purely based on weekly and annual seasonality
+
+```{R Data_Manipulation3}
+
+train_ts <- train_impute %>%
+  filter(region == 'R1') %>%
+  select(mortality_rate) %>%
+  unlist %>% set_names(NULL) %>%
+  ts(start = 1, frequency = 7)
+
+library(forecast)
+
+ts_fit <- tbats(msts(train_ts, seasonal.periods = c(7, 365.25)))
+ts_fc <- forecast(ts_fit, h = 365)
+plot(ts_fc)
+
+ts_pred <- cbind(n_day = seq(1, 365), mortality_seasonal = ts_fc$mean)
+
+dat_full <- dat_full %>%
+  dplyr::left_join(ts_pred, by = 'n_day', copy = TRUE)
+
+```
+
+
+Fit a GLMNET model to the data
+
+```{R Modelling1}
+
+# Drop all incomplete values
+train_complete <- dat_full %>%
+  dplyr::filter(complete.cases(.)) %>%
+  dplyr::filter(set == 'train') %>%
+  select(-Id)
+
+# # Dummify factors
+# train_dummy <- train_complete %>%
+#   mutate(weekday = as.character(weekday) %>% as.factor,
+#          month = as.character(month) %>% as.factor) %>% 
+#   {predict(dummyVars(mortality_rate ~ ., data = .), 
+#            newdata = .)} %>%
+#   as.data.frame()
+  
+# # Split into predictors and response
+# train_x <- train_dummy %>% 
+#   select(-date) %>%
+#   mutate_all(funs(as.numeric)) %>%
+#   as.matrix()
+# train_y <- train_complete$mortality_rate
+
+# Train glmnet
+tuneGrid <- expand.grid(
+  alpha = c(0.01, seq(from = 0.1, to = 1, length.out = 10)),
+  lambda = c(0.0000001, 0.0000003, 0.000001, 0.000003, 0.00001, 0.00003, 
+             seq(from = 0.0001, to = 0.01, length.out = 10)))
+tuneControl <- trainControl(
+  method = 'repeatedcv',
+  number = 5,
+  repeats = 1)
+
+# model_fit_3 <- train(
+#   x = train_x,
+#   y = train_y,
+#   method = 'glmnet',
+#   metric = 'RMSE',
+#   tuneGrid = tuneGrid,
+#   trControl = tuneControl)
+
+### Include interaction terms!
+
+model_fit <- train(
+  form = mortality_rate ~ 1 + NO2 + O3 + PM10 + PM25 + T2M + 
+    mortality_seasonal + mortality_mean_annual + mortality_mean_regional,
+  data = train_complete,
+  method = 'glmnet',
+  metric = 'RMSE',
+  tuneGrid = tuneGrid,
+  trControl = tuneControl)
+
+# Predict ----------------------------------------------------------------------
+
+dat_test <- dat_full %>%
+  filter(set == 'test')
+
+# Get predicted values
+test_prediction <- data_frame(
+  Id = test_raw$Id,
+  mortality_rate = predict(model_fit, newdata = dat_test))
+
+write_csv(test_prediction, 'output/prediction_06_glmnet.csv')
+
+```
+
+
+```{R relicts}
+
+test_clean <- test_raw %>%
+  select(-Id) %>%
+  mutate(weekday = weekdays(date) %>%
+         ordered(levels = c("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")),
+         month = month(date, 
+                       label = TRUE),
+         region = str_replace(region, 
+                              pattern = 'E1200000',
+                              replacement = 'R'))
+                              
+# Create dummy variables
+test_dummy <- test_clean %>%
+  mutate(weekday = as.character(weekday) %>% as.factor,
+         month = as.character(month) %>% as.factor) %>% 
+         {predict(dummyVars(~ ., data = .), 
+                  newdata = .)} %>%
+  as.data.frame() %>%
+  select(-date)
+  
+
+
+# Get predicted values
+test_prediction <- data_frame(
+  Id = test_raw$Id,
+  mortality_rate = predict(tree_model_3, newdata = test_dummy))
+
+write_csv(test_prediction, 'output/prediction_06_glmnet.csv')
+
+```
+
+
+```{R Modelling2}
+
+# Train xgboost
+tuneGrid <- expand.grid(
+  nrounds = c(500),
+  max_depth = c(5, 8, 12),
+  eta = c(0.3, 0.1, 0.03, 0.01, 0.003, 0.001),
+  colsample_bytree = c(0.6, 0.8, 1), 
+  gamma = 1,
+  min_child_weight = 1, 
+  subsample = 1)
+tuneControl <- trainControl(
+  method = 'repeatedcv',
+  number = 10,
+  repeats = 5,
+  verboseIter = TRUE,
+  returnData = FALSE,
+  returnResamp = 'all',
+  allowParallel = TRUE)
+
+tree_model_3 <- train(
+  x = train_x,
+  y = train_y,
+  method = 'xgbTree',
+  metric = 'RMSE',
+  tuneGrid = tuneGrid,
+  trControl = tuneControl)
+
+
+# Predict ----------------------------------------------------------------------
+test_raw <- read_csv('data/test.csv')
+
+test_clean <- test_raw %>%
+  select(-Id) %>%
+  mutate(weekday = weekdays(date) %>%
+         ordered(levels = c("Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday")),
+         month = month(date, 
+                       label = TRUE),
+         region = str_replace(region, 
+                              pattern = 'E1200000',
+                              replacement = 'R'))
+                              
+# Create dummy variables
+test_dummy <- test_clean %>%
+  mutate(weekday = as.character(weekday) %>% as.factor,
+         month = as.character(month) %>% as.factor) %>% 
+         {predict(dummyVars(~ ., data = .), 
+                  newdata = .)} %>%
+  as.data.frame() %>%
+  select(-date)
+  
+
+
+# Get predicted values
+test_prediction <- data_frame(
+  Id = test_raw$Id,
+  mortality_rate = predict(tree_model_3, newdata = test_dummy))
+
+write_csv(test_prediction, 'output/prediction_06_glmnet.csv')
+
+```
+
+
