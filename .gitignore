@@ -2,13 +2,13 @@
 .DS_Store
 
 #### Project folders
-data
-data/*
+# data
+# data/*
 
 #### Data files
-*.csv
-*.tsv
-*.jpg
+# *.csv
+# *.tsv
+# *.jpg
 
 #### Key files
 .ssh
