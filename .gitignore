@@ -4,6 +4,7 @@
 #### Project folders
 # data
 # data/*
+analysis_homecredit_defaultrisk/data/
 
 #### Data files
 # *.csv
