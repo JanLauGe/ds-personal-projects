@@ -15,8 +15,12 @@ library(parsnip)
 
 # DATA PREP ====================================================================
 
+# for reproducibility
+set.seed(12345)
+
 # Cute finces with funny beaks don't only occur in the Galapagos islands
 # (https://www.datacamp.com/courses/statistical-thinking-in-python-part-2)
+
 
 # THIS ONLY NEEDS TO RUN ONCE!
 # convert scientific (Latin) name to
@@ -34,6 +38,7 @@ library(parsnip)
 #   x = gbif_response,
 #   path = here::here('data/gbif_response_loxsco.rds')
 # )
+
 
 gbif_response <- read_rds(path = here::here('data/gbif_response_loxsco.rds'))
 
@@ -101,18 +106,61 @@ plot(data_climate_bydecade$raster_stacks[[1]])
 #2010
 plot(data_climate_bydecade$raster_stacks[[5]])
 
+# pick raster cells at random
+raster_random_sample <- function(x, y) {
+  raster::sampleRandom(
+    x = x, 
+    size = length(y) * 5,
+    cells = TRUE,
+    na.rm = TRUE,
+    asRaster = FALSE,
+    sp = FALSE) %>% 
+    as_data_frame()}
+
 # combine climate and bird data
-df <- data_birds_bydecade %>%
+df_presence <- data_birds_bydecade %>%
   mutate(
-    climate_data_at_record =  map2(
+    presence = 1,
+    climate =  map2(
       .x = data_climate_bydecade$raster_stacks,
       .y = data_birds_bydecade$points,
       .f = function(x, y) {raster::extract(x, y) %>% as_data_frame()}
     )
-  ) %>%
+  )
+
+# draw random sample from climate data with similar
+# temporal distribution to the bird data
+df_nopresence <- data_birds_bydecade %>%
+  mutate(
+    presence = 0,
+    climate = map2(
+      .x = data_climate_bydecade$raster_stacks,
+      .y = points,
+      .f = raster_random_sample),
+    # get coordinates of the random sample
+    data = map2(
+      .x = data_climate_bydecade$raster_stacks,
+      .y = climate,
+      .f = function(x, y) {
+        xyFromCell(
+          object = x,
+          cell = y$cell,
+          spatial = TRUE) %>%
+          spTransform(proj_latlon) %>%
+          coordinates() %>%
+          as_data_frame()
+      }),
+    # remove the now superfluous cell column from climate data
+    climate = map(.x = climate, .f = function(x) {x %>% select(-cell)})
+  )
+
+
+df <- bind_rows(df_presence, df_nopresence) %>%
   # discard spatial points
   select(-points) %>%
+  # get into modelling format
   unnest()
+
 
 
 # MODELLING ====================================================================
@@ -121,14 +169,18 @@ df <- data_birds_bydecade %>%
 library(parsnip)
 library(tidymodels)
 
-set.seed(12345)
-split <- initial_split(mtcars, props = 9/10)
-car_train <- training(split)
-car_test  <- testing(split)
+# true temporal split as holdout
+df_modelling <- df[df$decade != "2010",]
+df_holdout <- df[df$decade == "2010",]
+
+# split for internal validation
+split <- initial_split(df_modelling, props = 9/10)
+bird_train <- training(split)
+bird_test  <- testing(split)
 
 # Let’s preprocess these data to center and scale the predictors. We’ll use a basic recipe to do this:
-car_rec <- 
-  recipe(mpg ~ ., data = car_train) %>%
+car_rec <- recipe(
+  mpg ~ ., data = car_train) %>%
   step_center(all_predictors()) %>%
   step_scale(all_predictors()) %>%
   prep(training = car_train, retain = TRUE)
