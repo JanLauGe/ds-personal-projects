@@ -13,6 +13,15 @@ library(raster)
 library(tidymodels)
 library(parsnip)
 
+library(ggplot2)
+library(raster)
+library(rasterVis)
+library(rgdal)
+library(grid)
+library(scales)
+library(viridis)
+library(ggthemes)
+
 # DATA PREP ====================================================================
 
 # for reproducibility
@@ -128,6 +137,20 @@ df_presence <- data_birds_bydecade %>%
     )
   )
 
+# helper function to extract lat and lon from cell id
+get_latlon_from_raster <- function(x, y) {
+  xyFromCell(
+    object = x,
+    cell = y$cell,
+    spatial = TRUE) %>%
+    spTransform(proj_latlon) %>%
+    coordinates() %>%
+    as_data_frame() %>%
+    transmute(
+      decimalLongitude = x,
+      decimalLatitude = y)
+}
+
 # draw random sample from climate data with similar
 # temporal distribution to the bird data
 df_nopresence <- data_birds_bydecade %>%
@@ -141,15 +164,7 @@ df_nopresence <- data_birds_bydecade %>%
     data = map2(
       .x = data_climate_bydecade$raster_stacks,
       .y = climate,
-      .f = function(x, y) {
-        xyFromCell(
-          object = x,
-          cell = y$cell,
-          spatial = TRUE) %>%
-          spTransform(proj_latlon) %>%
-          coordinates() %>%
-          as_data_frame()
-      }),
+      .f = get_latlon_from_raster),
     # remove the now superfluous cell column from climate data
     climate = map(.x = climate, .f = function(x) {x %>% select(-cell)})
   )
@@ -168,40 +183,154 @@ df <- bind_rows(df_presence, df_nopresence) %>%
 # FROM: https://www.tidyverse.org/articles/2018/11/parsnip-0-0-1/
 library(parsnip)
 library(tidymodels)
+library(glmnet)
+library(caret)
 
 # true temporal split as holdout
+# TODO: should be stratified by presence / absence
 df_modelling <- df[df$decade != "2010",]
 df_holdout <- df[df$decade == "2010",]
 
+df_train <- df_modelling %>%
+  select(-decade, -decimalLongitude, -decimalLatitude) %>%
+  mutate(presence = case_when(
+    presence == 1 ~ "presence",
+    presence == 0 ~ "absence") %>%
+    factor()) %>%
+  na.omit()
+df_test <- df_holdout %>%
+  select(-decade, -decimalLongitude, -decimalLatitude) %>%
+  mutate(presence = case_when(
+    presence == 1 ~ "presence",
+    presence == 0 ~ "absence") %>%
+      factor()) %>%
+  na.omit()
+
+# CARET
+tuneGrid <- expand.grid(
+  alpha = seq(0, 1, length = 6),
+  lambda = 10 ** seq(-1, -10, by = -.25))
+tuneControl <- trainControl(
+  method = 'repeatedcv',
+  classProbs = TRUE,
+  number = 10,
+  repeats = 5,
+  verboseIter = FALSE,
+  summaryFunction = twoClassSummary)
+
+model_fit <- train(
+  presence ~ .,
+  data = df_train,
+  method = "glmnet",
+  family = "binomial",
+  metric = "ROC",
+  tuneGrid = tuneGrid,
+  trControl = tuneControl)
+
+plot(model_fit)
+
+# combine prediction with validation set
+df_eval <- predict(
+  object = model_fit,
+  newdata = df_test,
+  type = "prob") %>%
+  pull(1) %>%
+  cbind(
+    "pred" = ., 
+    "obs" = as.numeric(df_test$presence) - 1)
+
+df_eval <- data_frame(
+  pred = predict(object = model_fit, newdata = df_test, type = "prob")[,1],
+  obs = (as.numeric(df_test$presence) - 1) %>% factor()
+)
+
+# get ROC value
+roc_auc_vec(estimator = "binary", truth = df_eval$obs, estimate = df_eval$pred)
+
+predict(object = model_fit, newdata = df_test, type = "prob")[,1]
+
+# generate raster prediction
+make_pred_raster <- function(climate_raster_stack) {
+  # X values to predict with trained model
+  X <- climate_raster_stack %>% 
+    as.data.frame()
+  # calculate modelled probabilities
+  pred_values <- predict(object = model_fit, 
+                         newdata = X[complete.cases(X), ],
+                         type = "prob") %>%
+    pull(1)
+  
+  # copy raster from climate data
+  raster_prediction <- climate_raster_stack[[1]]
+  # overwrite all values
+  raster_prediction@data@values <- NA
+  # copy prediction values
+  raster_prediction@data@values[complete.cases(X)] <- pred_values
+  
+  return(raster_prediction)
+}
+
+
+plot_prediction <- function(x) {
+  x %>%
+    as("SpatialPixelsDataFrame") %>%
+    as_data_frame() %>%
+    set_colnames(c("Probability", "lon", "lat")) %>%
+    ggplot(aes(x = lon, y = lat, fill = Probability)) +  
+    geom_tile() +
+    coord_equal() +
+    theme_map() +
+    theme(legend.position = "bottom")
+}
+
+prediction <- data_climate_bydecade %>%
+  mutate(
+    prediction = map(.x = raster_stacks, .f = make_pred_raster),
+    plot = map(.x = prediction, .f = plot_prediction)
+  )
+
+# TODO:
+# could make this into faceted ggplot instead
+
+
+
+
+# PARSNIP
+
 # split for internal validation
 split <- initial_split(df_modelling, props = 9/10)
-bird_train <- training(split)
-bird_test  <- testing(split)
+bird_test  <- testing(split) %>%
+  select(-decade, -decimalLongitude, -decimalLatitude)
+bird_train <- training(split) %>% 
+  select(-decade, -decimalLongitude, -decimalLatitude)
 
-# Let’s preprocess these data to center and scale the predictors. We’ll use a basic recipe to do this:
-car_rec <- recipe(
-  mpg ~ ., data = car_train) %>%
+# preprocess
+bird_recipe <- recipe(presence ~ ., data = bird_train) %>%
   step_center(all_predictors()) %>%
   step_scale(all_predictors()) %>%
-  prep(training = car_train, retain = TRUE)
+  prep(training = bird_train, retain = TRUE)
+# apply to data
+bird_train <- juice(bird_recipe)
+bird_test  <- bake(bird_recipe, bird_test)
 
-# The processed versions are:
-train_data <- juice(car_rec)
-test_data  <- bake(car_rec, car_test)
+# start model building
+bird_model <- logistic_reg() %>%
+  set_engine("glmnet") %>%
+  fit(presence ~ ., data = bird_train)
+
+bird_model
+
+bird_pred <- predict(
+  object = bird_model,
+  new_data = bird_test,
+  type = "prob")
+bird_pred$presence <- bird_test$presence
+c(bird_pred$presence, bird_pred$.pred_)
+roc_auc(data = c(bird_pred$presence, bird_pred$.pred_))
+
+
+glmnet(bird_model, alpha = .5, lambda = 0.1)
 
 
 
-# define computational engine
-lm_car_model <- 
-  car_model %>%
-  set_engine("lm")
-lm_car_model
 
-# can use either formula or matrix input
-lm_fit <-
-  lm_car_model %>%
-  fit(mpg ~ ., data = car_train)
-
-# or
-lm_car_model %>%
-  fit_xy(x = select(car_train, -mpg), y = select(car_train, mpg))
