@@ -10,19 +10,25 @@ library(here)
 library(tidyverse)
 library(magrittr)
 library(stringr)
+library(lubridate)
 
 library(sf)
 library(sp)
 library(raster)
 
+# list all folders
+climate_vars <- list.dirs(here::here("data/climate/download/timeseries/"))[-1]
+climate_var_names <- climate_vars %>% basename
 
 # list csv file names
-file_names <- list.files(
-  path = here::here('data/climate/download/timeseries/mean-temperature/'), 
-  include.dirs = FALSE, full.names = TRUE)
+climate_var_files <- map(
+  .x = climate_vars,
+  .f = list.files,
+  include.dirs = FALSE, 
+  full.names = TRUE)
 
-# read in csv files and make to long format
-read_ukcp09 <- function(file_name) {
+# to read in csv files for one variable and make to long format
+read_ukcp_var <- function(file_name, var_name) {
   file_content <- read_csv(
     file = file_name,
     col_names = FALSE,
@@ -33,12 +39,48 @@ read_ukcp09 <- function(file_name) {
     select(-X1) %>% 
     t() %>% as_data_frame() %>%
     set_colnames(pull(file_content, 1)) %>%
-    gather(key = 'month', value = 'measurement', -easting, -northing)
+    gather(key = 'month', value = 'measurement', -easting, -northing) %>%
+    mutate(variable = var_name)
+  
   return(file_content_long)
 }
 
-# read all files into list
-ukcp09 <- map_df(.x = file_names, .f = read_ukcp09)
+# to read all files into one dataframe
+read_ukcp <- function(file_names, var_name) {
+  # read files for var
+  var_data <- map_df(
+    .x = file_names, 
+    .f = read_ukcp_var, 
+    var_name = var_name)
+  # aggregate by decade
+  var_data_summarized <- var_data %>%
+    transmute(
+      easting = easting,
+      northing = northing,
+      variable = variable,
+      measurement = measurement,
+      decade = month %>% 
+        fast_strptime(format = "%Y-%m") %>%
+        round_date("10y") %>%
+        year() %>%
+        as.numeric()
+    ) %>%
+    group_by(easting, northing, variable, decade) %>%
+    summarize(measurement = mean(measurement)) %>%
+    ungroup()
+  
+  return(var_data_summarized)
+}
+
+# read all files 
+x <- map2_df(
+  .x = climate_var_files,
+  .y = climate_var_names,
+  .f = read_ukcp
+)
+
+# save data
+write_rds(x = x, path = here::here("data/ukcp09_by_decade.rds"))
 
 
 # shortcuts
@@ -47,39 +89,14 @@ proj_latlong <- CRS("+init=epsg:4326")
 
 
 # test on subset
-x <- ukcp09 %>% 
-  filter(month == "1910-01")
-r <- rasterFromXYZ(x[, c("easting", "northing", "measurement")], crs = "+init=epsg:27700")
+r <- x %>% 
+  filter(
+    decade == "2010" &
+    variable == "air-frost") %>%
+  {rasterFromXYZ(
+    xyz = select(., "easting", "northing", "measurement"),
+    crs = CRS("+init=epsg:27700"))}
+
 plot(r)
 
-bla <- rasterize(file_spatial)
-# convert to latlon
-bla <- spTransform(r, proj_latlong)
-
-# merge into one spatial dataframe
-df_spatial <- reduce(.x = files_spatial, .f = rbind)
-
-write_rds(df_spatial, "data/df_spatial_monthly_mean.rds")
-
-library(lubridate)
-df_spatial[1:10,] %>%
-  mutate(month = fast_strptime(x = month, format = "Y!-m!*"))
-
-library(dismo)
-files <- list.files(
-  path = paste(system.file(package="dismo"), '/ex', sep = ''), 
-  pattern = 'grd', 
-  full.names = TRUE )
-
-predictors <- stack(files)
-
-
-
-library(rWBclimate)
-UK <- get_model_temp(
-  locator = "GBR", 
-  type = "mavg", 
-  start = 2080, 
-  end = 2100)
-
-get_historical_precip(locator = "GBR", "month")
+?projectRaster
