@@ -4,41 +4,102 @@ library(rgbif)
 
 # DATA PREP ====================================================================
 
+# Cute finces with funny beaks don't only occur in the Galapagos islands
+# (https://www.datacamp.com/courses/statistical-thinking-in-python-part-2)
+
+# convert scientific (Latin) name to
+speciesKey <- rgbif::name_backbone('Loxia scotica')$speciesKey
+
 # Using rgbif by rOpenSci
 gbif_response <- occ_search(
-  scientificName = "Cuculus canorus",
+  scientificName = "Loxia scotica",
   country = "GB",
   hasCoordinate = TRUE,
-  year = as.character(1965:2015),
-  hasGeospatialIssue = FALSE)
+  hasGeospatialIssue = FALSE,
+  limit = 9999)
 # backup to reduce API load
 write_rds(
   x = gbif_response,
-  path = here::here('data/bird_records.rds')
+  path = here::here('data/gbif_response_loxsco.rds')
 )
-gbif_response <- read_rds(path = here::here('data/bird_records.rds'))
+gbif_response <- read_rds(path = here::here('data/gbif_response_loxsco.rds'))
 
-
-# convert into dataframe
-df_data_birds <- data_frame(
-  year = gbif_response %>% names(),
-  data = gbif_response %>% map('data')) %>%
-  unnest()
+# # convert into dataframe
+# data_birds_raw <- data_frame(
+#   year = gbif_response %>% names(),
+#   data = gbif_response %>% map('data')) %>%
+#   unnest()
 
 # look at a random sample of 100 rows
-df_data_birds %>% sample_n(100)
+gbif_response$data %>%
+  sample_n(100) %>% 
+  View()
 
-  #select(decimalLatitude, decimalLongitue, )
+data_birds_clean <- gbif_response$data %>%
+  # TODO: double-check filtes!
+  # filter(
+  #   # only classified as present
+  #   occurrenceStatus == "present" &
+  #   # only records with no issues
+  #   issues == "" &
+  #   # only creative commons license records
+  #   str_detect(license, "http://creativecommons.org/")) %>%
+  # get year of record from eventDate
+  mutate(decade = eventDate %>% 
+           ymd_hms() %>% 
+           round_date("10y") %>%
+           year() %>%
+           as.numeric()) %>%
+  # exclude records from after 2015
+  filter(decade != 2020) %>%
+  # retain only relevant variables
+  select(decimalLongitude, decimalLatitude, decade)
 
+# latlon crs reference
+proj_latlon <- CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
+proj_ukgrid <- CRS("+init=epsg:27700")
 
+data_birds_bydecade <- data_birds_clean %>%
+  group_by(decade) %>% nest() %>%
+  filter(decade >= 1970) %>%
+  mutate(points = map(
+    .x = data, 
+    .f = function(x) {
+      # make records into spatial points
+      SpatialPoints(coords = x, proj4string = proj_latlon)
+    } %>%
+      # reproject spatial points to match the climate data
+      spTransform(CRSobj = proj_ukgrid)))
+  #select(decade, points)
 
 # raster data
 # should include reference to this course:
 # https://www.datacamp.com/courses/spatial-analysis-in-r-with-sf-and-raster
-data_climate <- read_rds(here::here("data/ukcp09_stacked_rasters.rds"))
+data_climate_bydecade <- read_rds(here::here("data/ukcp09_stacked_rasters.rds"))
 
 
+# EDA ==========================================================================
 
+# TODO:
+# should use same scale
+# could do a cheeky gganimate here
+# 1970
+plot(data_climate_bydecade$raster_stacks[[1]])
+#2010
+plot(data_climate_bydecade$raster_stacks[[5]])
+
+# combine climate and bird data
+df <- data_birds_bydecade %>%
+  mutate(
+    climate_data_at_record =  map2(
+      .x = data_climate_bydecade$raster_stacks,
+      .y = data_birds_bydecade$points,
+      .f = function(x, y) {raster::extract(x, y) %>% as_data_frame()}
+    )
+  ) %>%
+  # discard spatial points
+  select(-points) %>%
+  unnest()
 
 
 # MODELLING ====================================================================
