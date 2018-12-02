@@ -1,12 +1,47 @@
-install.packages('rgbif')
+#install.packages('rgbif')
 library(rgbif)
 
-occ_data <- occ_search(scientificName = "Ursus americanus", limit = 50)
+
+# DATA PREP ====================================================================
+
+# Using rgbif by rOpenSci
+gbif_response <- occ_search(
+  scientificName = "Cuculus canorus",
+  country = "GB",
+  hasCoordinate = TRUE,
+  year = as.character(1965:2015),
+  hasGeospatialIssue = FALSE)
+# backup to reduce API load
+write_rds(
+  x = gbif_response,
+  path = here::here('data/bird_records.rds')
+)
+gbif_response <- read_rds(path = here::here('data/bird_records.rds'))
+
+
+# convert into dataframe
+df_data_birds <- data_frame(
+  year = gbif_response %>% names(),
+  data = gbif_response %>% map('data')) %>%
+  unnest()
+
+# look at a random sample of 100 rows
+df_data_birds %>% sample_n(100)
+
+  #select(decimalLatitude, decimalLongitue, )
+
+
 
 # raster data
 # should include reference to this course:
 # https://www.datacamp.com/courses/spatial-analysis-in-r-with-sf-and-raster
+data_climate <- read_rds(here::here("data/ukcp09_stacked_rasters.rds"))
 
+
+
+
+
+# MODELLING ====================================================================
 
 # FROM: https://www.tidyverse.org/articles/2018/11/parsnip-0-0-1/
 library(parsnip)

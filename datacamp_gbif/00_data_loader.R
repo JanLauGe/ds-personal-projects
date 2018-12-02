@@ -102,7 +102,7 @@ nested_rasters <- ukcp_data %>%
   )
 
 # stack rasters together by decade
-bla <- nested_rasters %>%
+stacked_rasters <- nested_rasters %>%
   group_by(decade) %>%
   summarize(
     raster_stacks = list(
@@ -112,7 +112,10 @@ bla <- nested_rasters %>%
     )
   )
 
-bla[1,]$raster_stacks[[1]] %>% plot()
+write_rds(
+  x = stacked_rasters,
+  path = here::here("data/ukcp09_stacked_rasters.rds")
+)
 
 
 
