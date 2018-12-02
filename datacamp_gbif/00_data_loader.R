@@ -73,30 +73,53 @@ read_ukcp <- function(file_names, var_name) {
 }
 
 # read all files 
-x <- map2_df(
+ukcp_data <- map2_df(
   .x = climate_var_files,
   .y = climate_var_names,
   .f = read_ukcp
 )
 
 # save data
-write_rds(x = x, path = here::here("data/ukcp09_by_decade.rds"))
-
+#write_rds(x = ukcp_data, path = here::here("data/ukcp09_by_decade.rds"))
+ukcp_data <- read_rds(path = here::here("data/ukcp09_by_decade.rds"))
 
 # shortcuts
 proj_ukgrid <- CRS("+init=epsg:27700")
 proj_latlong <- CRS("+init=epsg:4326")
 
+# make into nested df
+nested_rasters <- ukcp_data %>% 
+  group_by(decade, variable) %>% nest() %>%
+  # exclude pre-1970 values
+  filter(decade %in% c("1970", "1980", "1990", "2000", "2010")) %>%
+  # create rasters
+  mutate(
+    rasters = data %>%
+      map(.f = function(x) {
+        rasterFromXYZ(xyz = x, crs = proj_ukgrid)
+      }
+    )
+  )
 
-# test on subset
-r <- x %>% 
-  filter(
-    decade == "2010" &
-    variable == "air-frost") %>%
-  {rasterFromXYZ(
-    xyz = select(., "easting", "northing", "measurement"),
-    crs = CRS("+init=epsg:27700"))}
+# stack rasters together by decade
+bla <- nested_rasters %>%
+  group_by(decade) %>%
+  summarize(
+    raster_stacks = list(
+      stack(rasters) %>%
+        # variables as list names
+        set_names(variable)
+    )
+  )
 
-plot(r)
+bla[1,]$raster_stacks[[1]] %>% plot()
 
-?projectRaster
+
+
+
+
+
+
+
+
+
