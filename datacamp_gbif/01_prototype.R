@@ -1,27 +1,40 @@
 #install.packages('rgbif')
 library(rgbif)
+library(here)
+library(tidyverse)
+library(magrittr)
+library(stringr)
+library(lubridate)
 
+library(sf)
+library(sp)
+library(raster)
+
+library(tidymodels)
+library(parsnip)
 
 # DATA PREP ====================================================================
 
 # Cute finces with funny beaks don't only occur in the Galapagos islands
 # (https://www.datacamp.com/courses/statistical-thinking-in-python-part-2)
 
+# THIS ONLY NEEDS TO RUN ONCE!
 # convert scientific (Latin) name to
-speciesKey <- rgbif::name_backbone('Loxia scotica')$speciesKey
+# speciesKey <- rgbif::name_backbone('Loxia scotica')$speciesKey
+# 
+# # Using rgbif by rOpenSci
+# gbif_response <- occ_search(
+#   scientificName = "Loxia scotica",
+#   country = "GB",
+#   hasCoordinate = TRUE,
+#   hasGeospatialIssue = FALSE,
+#   limit = 9999)
+# # backup to reduce API load
+# write_rds(
+#   x = gbif_response,
+#   path = here::here('data/gbif_response_loxsco.rds')
+# )
 
-# Using rgbif by rOpenSci
-gbif_response <- occ_search(
-  scientificName = "Loxia scotica",
-  country = "GB",
-  hasCoordinate = TRUE,
-  hasGeospatialIssue = FALSE,
-  limit = 9999)
-# backup to reduce API load
-write_rds(
-  x = gbif_response,
-  path = here::here('data/gbif_response_loxsco.rds')
-)
 gbif_response <- read_rds(path = here::here('data/gbif_response_loxsco.rds'))
 
 # # convert into dataframe
