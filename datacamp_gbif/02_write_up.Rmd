@@ -1,0 +1,370 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r setup, message=FALSE}
+library(here)
+library(tidyverse)
+library(magrittr)
+library(stringr)
+library(lubridate)
+
+library(rgbif)
+
+library(sp)
+library(rgdal)
+library(raster)
+library(rasterVis)
+
+library(tidymodels)
+library(glmnet)
+library(caret)
+```
+
+
+The Scottish Crossbill (**Loxia scotica**) is a small passerine bird that 
+inhabits the Caledonian Forests of Scotland, and is the only terrestrial 
+vertebrate species unique to the United Kingdom. Only ~ 20000 individuals of 
+this species are alive today.
+
+The first step is to get occurrence data for the species we are interested in.
+This used to be the main challenge in Biogeography. Natural Historians such as
+Charles Darwin, Alfred Russel Wallace, and Alexander von Humboldt would travel
+for years on rustic sail ships around the globe collecting specimen. Today, 
+we are standing on the shoulders of giants. Getting data is fast and easy 
+thanks to the work of two organisations:
+
+- [the Global Biodiversity Information Facility (GBIF)](https://www.gbif.org/),
+an international network and research infrastructure funded by the world’s 
+governments and aimed at providing anyone, anywhere, open access to data about 
+all types of life on Earth.
+
+- [rOpenSci](https://ropensci.org/), a non-profit initiative that has developed 
+an ecosystem of open source tools, we run annual unconferences, and review 
+community developed software.
+
+
+```{r data_download}
+# Cute finces with funny beaks don't only occur in the Galapagos islands
+# (https://www.datacamp.com/courses/statistical-thinking-in-python-part-2)
+
+
+# THIS ONLY NEEDS TO RUN ONCE!
+# convert scientific (Latin) name to gbif taxon ID
+# (Good to avoid synonyms, which are common with english species names)
+speciesKey <- rgbif::name_backbone('Loxia scotica')$speciesKey
+
+# get the occurrence records of this species
+gbif_response <- occ_search(
+  scientificName = "Loxia scotica",
+  country = "GB",
+  hasCoordinate = TRUE,
+  hasGeospatialIssue = FALSE,
+  limit = 9999)
+# backup to reduce API load
+write_rds(
+  x = gbif_response,
+  path = here::here('data/gbif_occs_loxsco.rds')
+)
+# # to read file back in:
+# gbif_response <- read_rds(path = here::here('data/gbif_response_loxsco.rds'))
+```
+
+
+GBIF and rOpenSci just saved us years or roaming around the highlands with a 
+pair of binoculars, camping in mud, rain, and snow, and chasing crossbills 
+through the forest. Nevertheless, it is still up to us to make sense of the
+data we got back, in particular to clean it, as data collected on this large
+scale can have its own issues. Luckily, GBIF provides some useful metadata
+on each record. Here, I will exclude those that
+
+* are not tagged as "present" (they may be artifacts from collections)
+* don't have any flagged issues (nobody has noticed anything abnormal with this)
+* are under creative commons license (we can use them here)
+* are older than 1965
+
+
+```{r data cleaning}
+# look at a random sub-sample of the data (100 rows)
+# we can see there is a lot of information on each record!
+gbif_response$data %>%
+  sample_n(100) %>% 
+  View()
+
+birds_clean <- gbif_response$data %>%
+  # get decade of record from eventDate
+  mutate(decade = eventDate %>% 
+           ymd_hms() %>% 
+           round_date("10y") %>%
+           year() %>%
+           as.numeric()) %>%
+  # clean data using metadata filters
+  filter(
+    # only classified as present
+    occurrenceStatus == "present" &
+    # only records with no issues
+    issues == "" &
+    # only creative commons license records
+    str_detect(license, "http://creativecommons.org/") &
+    # no records before 1965
+    decade >= 1970) %>%
+  # retain only relevant variables
+  dplyr::select(decimalLongitude, decimalLatitude, decade)
+
+```
+
+
+Okay so we've got clean data now. Here comes the nifty trick. We want to look
+at the data in subsets by decade in order to see if and how the spatial 
+distribution of the species has changed over time. To do so, we can "nest"
+data in a list column using the `tidyr` package:
+
+```{r}
+
+birds_nested <- birds_clean %>%
+  # define the nesting index
+  group_by(decade) %>% 
+  # aggregate data in each group
+  nest()
+
+# let's have a look
+head(birds_nested)
+
+```
+
+The species data needs some further transformation before we can use it in this 
+project. Let's extract the decade of the records from the date field using the
+`lubridate` package. Now that the data is cleaned we can also exclude a lot of 
+the metadata shift our focus to the spatial information. This is given as 
+latitude and longitude but since we're only looking at the UK (and because
+our environmental data is from the UK Met Office), we should transform this to
+a UK grid projection. This is easily done using the `sp` package. If you want 
+to learn more about map projections you can check out 
+
+TODO: enter xkcd reference and a good link
+
+```{r}
+
+# latlon crs reference
+proj_latlon <- CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
+proj_ukgrid <- CRS("+init=epsg:27700")
+
+birds_spatial <- birds_nested %>%
+  # make records into spatial points
+  mutate(points = map(
+    .x = data, 
+    .f = function(x) {SpatialPoints(coords = x, proj4string = proj_latlon)} %>%
+      # reproject spatial points to the UK grid
+      # (this is so it matches our climate data)
+      spTransform(CRSobj = proj_ukgrid)))
+
+```
+
+
+TODO: should include reference to this course:
+https://www.datacamp.com/courses/spatial-analysis-in-r-with-sf-and-raster
+
+```{r}
+
+# read raster data
+data_climate_bydecade <- read_rds(here::here("data/ukcp09_stacked_rasters.rds"))
+
+
+# EDA ==========================================================================
+
+# TODO:
+# should use same scale
+# could do a cheeky gganimate here
+# 1970
+plot(data_climate_bydecade$raster_stacks[[1]])
+#2010
+plot(data_climate_bydecade$raster_stacks[[5]])
+
+# pick raster cells at random
+raster_random_sample <- function(x, y) {
+  raster::sampleRandom(
+    x = x, 
+    size = length(y) * 5,
+    cells = TRUE,
+    na.rm = TRUE,
+    asRaster = FALSE,
+    sp = FALSE) %>% 
+    as_data_frame()}
+
+# combine climate and bird data
+df_presence <- data_birds_bydecade %>%
+  mutate(
+    presence = 1,
+    climate =  map2(
+      .x = data_climate_bydecade$raster_stacks,
+      .y = data_birds_bydecade$points,
+      .f = function(x, y) {raster::extract(x, y) %>% as_data_frame()}
+    )
+  )
+
+# helper function to extract lat and lon from cell id
+get_latlon_from_raster <- function(x, y) {
+  xyFromCell(
+    object = x,
+    cell = y$cell,
+    spatial = TRUE) %>%
+    spTransform(proj_latlon) %>%
+    coordinates() %>%
+    as_data_frame() %>%
+    transmute(
+      decimalLongitude = x,
+      decimalLatitude = y)
+}
+
+# draw random sample from climate data with similar
+# temporal distribution to the bird data
+df_nopresence <- data_birds_bydecade %>%
+  mutate(
+    presence = 0,
+    climate = map2(
+      .x = data_climate_bydecade$raster_stacks,
+      .y = points,
+      .f = raster_random_sample),
+    # get coordinates of the random sample
+    data = map2(
+      .x = data_climate_bydecade$raster_stacks,
+      .y = climate,
+      .f = get_latlon_from_raster),
+    # remove the now superfluous cell column from climate data
+    climate = map(.x = climate, .f = function(x) {x %>% select(-cell)})
+  )
+
+
+df <- bind_rows(df_presence, df_nopresence) %>%
+  # discard spatial points
+  select(-points) %>%
+  # get into modelling format
+  unnest()
+
+
+```
+
+
+
+```{r}
+
+# for reproducibility
+set.seed(12345)
+
+# true temporal split as holdout
+# TODO: should be stratified by presence / absence
+df_modelling <- df[df$decade != "2010",]
+df_holdout <- df[df$decade == "2010",]
+
+df_train <- df_modelling %>%
+  select(-decade, -decimalLongitude, -decimalLatitude) %>%
+  mutate(presence = case_when(
+    presence == 1 ~ "presence",
+    presence == 0 ~ "absence") %>%
+    factor()) %>%
+  na.omit()
+df_test <- df_holdout %>%
+  select(-decade, -decimalLongitude, -decimalLatitude) %>%
+  mutate(presence = case_when(
+    presence == 1 ~ "presence",
+    presence == 0 ~ "absence") %>%
+      factor()) %>%
+  na.omit()
+
+# CARET
+tuneGrid <- expand.grid(
+  alpha = seq(0, 1, length = 6),
+  lambda = 10 ** seq(-1, -10, by = -.25))
+tuneControl <- trainControl(
+  method = 'repeatedcv',
+  classProbs = TRUE,
+  number = 10,
+  repeats = 5,
+  verboseIter = FALSE,
+  summaryFunction = twoClassSummary)
+
+model_fit <- train(
+  presence ~ .,
+  data = df_train,
+  method = "glmnet",
+  family = "binomial",
+  metric = "ROC",
+  tuneGrid = tuneGrid,
+  trControl = tuneControl)
+
+plot(model_fit)
+
+# combine prediction with validation set
+df_eval <- predict(
+  object = model_fit,
+  newdata = df_test,
+  type = "prob") %>%
+  pull(1) %>%
+  cbind(
+    "pred" = ., 
+    "obs" = as.numeric(df_test$presence) - 1)
+
+df_eval <- data_frame(
+  pred = predict(object = model_fit, newdata = df_test, type = "prob")[,1],
+  obs = (as.numeric(df_test$presence) - 1) %>% factor()
+)
+
+# get ROC value
+roc_auc_vec(estimator = "binary", truth = df_eval$obs, estimate = df_eval$pred)
+
+predict(object = model_fit, newdata = df_test, type = "prob")[,1]
+
+# generate raster prediction
+make_pred_raster <- function(climate_raster_stack) {
+  # X values to predict with trained model
+  X <- climate_raster_stack %>% 
+    as.data.frame()
+  # calculate modelled probabilities
+  pred_values <- predict(object = model_fit, 
+                         newdata = X[complete.cases(X), ],
+                         type = "prob") %>%
+    pull(1)
+  
+  # copy raster from climate data
+  raster_prediction <- climate_raster_stack[[1]]
+  # overwrite all values
+  raster_prediction@data@values <- NA
+  # copy prediction values
+  raster_prediction@data@values[complete.cases(X)] <- pred_values
+  
+  return(raster_prediction)
+}
+
+
+plot_prediction <- function(x) {
+  x %>%
+    as("SpatialPixelsDataFrame") %>%
+    as_data_frame() %>%
+    set_colnames(c("Probability", "lon", "lat")) %>%
+    ggplot(aes(x = lon, y = lat, fill = Probability)) +  
+    geom_tile() +
+    coord_equal() +
+    theme_map() +
+    theme(legend.position = "bottom")
+}
+
+prediction <- data_climate_bydecade %>%
+  mutate(
+    prediction = map(.x = raster_stacks, .f = make_pred_raster),
+    plot = map(.x = prediction, .f = plot_prediction)
+  )
+
+# TODO:
+# could make this into faceted ggplot instead
+
+
+
+
+
+
+```
