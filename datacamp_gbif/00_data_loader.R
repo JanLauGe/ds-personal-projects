@@ -88,10 +88,15 @@ proj_ukgrid <- CRS("+init=epsg:27700")
 proj_latlong <- CRS("+init=epsg:4326")
 
 # make into nested df
-nested_rasters <- ukcp_data %>% 
+nested_rasters <- ukcp_data %>%
+  # select variables to include
+  filter(variable %in% c(
+    "ground-frost", "rain-days-10mm", "rain-days-1mm", "rainfall",
+    "maximum-temperature", "mean-temperature", "minimum-temperature",
+    "relative-humidity", "snow-lying", "sunshine", "wind-speed")) %>%
   group_by(decade, variable) %>% nest() %>%
   # exclude pre-1970 values
-  filter(decade %in% c("1970", "1980", "1990", "2000", "2010")) %>%
+  filter(decade %in% c("1990", "2000", "2010")) %>%
   # create rasters
   mutate(
     rasters = data %>%
@@ -114,7 +119,7 @@ stacked_rasters <- nested_rasters %>%
 
 write_rds(
   x = stacked_rasters,
-  path = here::here("data/ukcp09_stacked_rasters.rds")
+  path = here::here("data/ukcp09_stacked_rasters_subset.rds")
 )
 
 

@@ -197,6 +197,8 @@ plot(climate_nested$raster_stacks[[1]])
 #2010
 plot(climate_nested$raster_stacks[[5]])
 
+
+
 ```
 
 
@@ -228,11 +230,12 @@ locs_nobirds <- data_frame(
     .f = ~ as_tibble(sampleRandom(.x, size = .y, cells = FALSE))))
 
 # combine the two datasets
-df <- bind_rows(locs_withbirds, locs_nobirds) %>%
-  # get into modelling format
-  unnest()
+df_nested <- bind_rows(locs_withbirds, locs_nobirds) %>% 
+  unnest() %>% 
+  group_by(decade) %>% 
+  nest()
 
-head(df)
+df_nested
 ```
 
 
@@ -240,7 +243,9 @@ head(df)
 ```{r train_test_split}
 
 # last pre-processing step
-df <- df %>%
+df_modelling <- df_nested %>%
+  # get into modelling format
+  unnest() %>%
   # caret requires a factorial response variable for classification
   mutate(presence = case_when(
     presence == 1 ~ "presence",
@@ -249,19 +254,24 @@ df <- df %>%
   # drop all observations with NA variables
   na.omit()
 
-df_train <- df %>%
+df_train <- df_modelling %>%
   # true temporal split as holdout
   filter(decade != "2010") %>%
   # drop decade, it's not needed anymore
   dplyr::select(-decade)
 
 # same steps for test set
-df_test <- df %>%
+df_test <- df_modelling %>%
   filter(decade == "2010") %>%
   dplyr::select(-decade)
 
 ```
 
+
+Caret makes the model fitting incredibly easy! All we need to do is specify
+a tuning grid of hyperparameters that we want to optimise, a tune control 
+that adjusts the number of iterations and the loss function used, and then
+call train with the algorithm we have picked.
 
 ```{r model_fitting}
 # for reproducibility
@@ -270,8 +280,8 @@ set.seed(12345)
 # set up model fitting parameters
 # tuning grid, trying every possible combination
 tuneGrid <- expand.grid(
-  mtry = c(6, 9, 12, 16),
-  coefReg = c(.4, .6, .8, 1))
+  alpha = seq(0, 1, length = 6),
+  lambda = c(0.05))
 tuneControl <- trainControl(
   method = 'repeatedcv',
   classProbs = TRUE,
@@ -283,16 +293,21 @@ tuneControl <- trainControl(
 model_fit <- train(
   presence ~ .,
   data = df_train,
-  method = "RRFglobal",
+  method = "glmnet",
   family = "binomial",
   metric = "ROC",
   tuneGrid = tuneGrid,
   trControl = tuneControl)
 
+
 plot(model_fit)
 
 ```
 
+
+We can evaluate this model using the Area under the Receiver Operator 
+Characteristic curve (AUC). With this metric, a model no bettern than random
+would score 0.5 while a perfect model making no mistakes would score 1.
 
 ```{r model_evaluation}
 
@@ -311,63 +326,82 @@ roc_auc_vec(estimator = "binary", truth = df_eval$obs, estimate = df_eval$pred)
 ```
 
 
+That is a pretty good result!
+
 ```{r model_prediction}
 
-# generate raster prediction
-make_pred_raster <- function(climate_raster_stack) {
-  # X values to predict with trained model
-  X <- climate_raster_stack %>% 
-    as.data.frame()
-  # calculate modelled probabilities
-  pred_values <- predict(
-    object = model_fit,
-    newdata = X[complete.cases(X), ],
-    type = "prob") %>%
-    pull("presence")
-  # copy raster from climate data
-  raster_prediction <- climate_raster_stack[[1]]
-  # overwrite all values
-  raster_prediction@data@values <- NA
-  # copy prediction values
-  raster_prediction@data@values[complete.cases(X)] <- pred_values
-  return(raster_prediction)
-}
-
-# generate plot of spatial prediction
-plot_prediction <- function(raster) {
-  raster %>%
-    # SpatialPixelDataFrame works well with ggplot
-    as("SpatialPixelsDataFrame") %>%
-    as_data_frame() %>%
-    set_colnames(c("Probability", "lon", "lat")) %>%
-    ggplot(aes(x = lon, y = lat, fill = Probability)) + 
-    # good colour palette for colour blind people
-    scale_fill_viridis(option = "A") +
-    geom_tile() +
-    coord_equal() +
-    theme_map() +
-    theme(legend.position = "bottom")
-}
-
-prediction <- data_climate_bydecade %>%
+df_eval <- df_modelling %>% 
+  group_by(decade) %>% nest() %>%
+  # combine with climate data
+  left_join(climate_nested, by = "decade") %>%
+  # evaluate by decade
   mutate(
-    prediction = map(.x = raster_stacks, .f = make_pred_raster),
-    plot = map(.x = prediction, .f = plot_prediction))
+    "obs" = map(
+      .x = data, 
+      ~ .x$presence),
+    "pred" = map(
+      .x = data, 
+      ~ predict(model_fit, newdata = .x, type = "prob") %>% pull("presence")),
+    "auc" = map2_dbl(
+      .x = obs,
+      .y = pred,
+      ~ roc_auc_vec(
+          estimator = "binary",
+          truth = .x, 
+          estimate = .y)),
+    "climate_data" = map(
+      .x = raster_stacks, 
+      ~ as(.x, "SpatialPixelsDataFrame") %>%
+        as_data_frame() %>%
+        na.omit()),
+    "habitat_suitability" = map(
+      .x = climate_data,
+      ~ predict(model_fit, newdata = .x, type = "prob") %>% pull("presence"))
+    )
 
-plot(prediction$plot[[5]])
-
-# TODO:
-# could make this into faceted ggplot instead
+df_eval %>%
+  dplyr::select(decade, climate_data, habitat_suitability) %>% unnest() %>%
+  ggplot(aes(x = x, y = y, fill = habitat_suitability)) +
+  geom_tile() + #facet_wrap(~ decade) +
+  # good colour palette for colour blind people
+  scale_fill_viridis(option = "A") +
+  coord_equal() +
+  theme_map() +
+  theme(legend.position = "bottom") +
+  # animate plot, morphing through decades
+  transition_states(
+    states = decade,
+    transition_length = .5,
+    state_length = 3) +
+  labs(title = 'Habitat Suitability per Decade',
+      #gganimate: animate subtitle
+      #subtitle = 'Decade: {frame_time}',
+      caption = 'Source: GBIF data and MetOffice UK climate data',
+      fill = 'Habitat Suitability [0 low - high 1]')
 
 ```
 
 
-gganimate info in appendix here:
-https://www.kaggle.com/bigironsphere/did-drought-cause-the-war-in-syria-an-r-tutorial
-
 ```{r}
 
-r2tile
+# code to remove cells with missing values in any decade
+no_na_data <- df_eval %>%
+  dplyr::select(decade, climate_data, habitat_suitability) %>% 
+  # change nesting
+  unnest() %>% group_by(x, y) %>% nest() %>%
+  # find cells with missing values
+  mutate(any_na = map_lgl(
+      .x = data,
+      ~ dim(.x)[[1]] == 5)) %>%
+  # exclude them
+  filter(any_na) %>%
+  dplyr::select(x, y, data) %>%
+  unnest()
 
+no_na_data %>%
+  gather(key = "variable", value = "value", -x, -y, -decade) %>%
+  ggplot(aes(x = x, y = y, fill = value)) +
+  geom_tile() +
+  facet_wrap(~ variable, scales="free")
 
 ```

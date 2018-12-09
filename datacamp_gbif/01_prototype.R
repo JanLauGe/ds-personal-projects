@@ -295,42 +295,4 @@ prediction <- data_climate_bydecade %>%
 
 
 
-# PARSNIP
-
-# split for internal validation
-split <- initial_split(df_modelling, props = 9/10)
-bird_test  <- testing(split) %>%
-  select(-decade, -decimalLongitude, -decimalLatitude)
-bird_train <- training(split) %>% 
-  select(-decade, -decimalLongitude, -decimalLatitude)
-
-# preprocess
-bird_recipe <- recipe(presence ~ ., data = bird_train) %>%
-  step_center(all_predictors()) %>%
-  step_scale(all_predictors()) %>%
-  prep(training = bird_train, retain = TRUE)
-# apply to data
-bird_train <- juice(bird_recipe)
-bird_test  <- bake(bird_recipe, bird_test)
-
-# start model building
-bird_model <- logistic_reg() %>%
-  set_engine("glmnet") %>%
-  fit(presence ~ ., data = bird_train)
-
-bird_model
-
-bird_pred <- predict(
-  object = bird_model,
-  new_data = bird_test,
-  type = "prob")
-bird_pred$presence <- bird_test$presence
-c(bird_pred$presence, bird_pred$.pred_)
-roc_auc(data = c(bird_pred$presence, bird_pred$.pred_))
-
-
-glmnet(bird_model, alpha = .5, lambda = 0.1)
-
-
-
 
