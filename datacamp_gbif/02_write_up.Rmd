@@ -3,6 +3,8 @@ title: "R Notebook"
 output: html_notebook
 ---
 
+TODO: We all knew birds nest but who knew that data frames nest, too?
+
 This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
 
 Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
@@ -22,8 +24,10 @@ library(raster)
 library(rasterVis)
 
 library(tidymodels)
-library(glmnet)
+library(randomForest)
+library(RRF)
 library(caret)
+
 ```
 
 
@@ -105,16 +109,22 @@ birds_clean <- gbif_response$data %>%
            as.numeric()) %>%
   # clean data using metadata filters
   filter(
-    # only classified as present
-    occurrenceStatus == "present" &
-    # only records with no issues
-    issues == "" &
-    # only creative commons license records
-    str_detect(license, "http://creativecommons.org/") &
-    # no records before 1965
-    decade >= 1970) %>%
+    # # only classified as present
+    # occurrenceStatus == "present" &
+    # # only records with no issues
+    # issues == "" &
+    # # only creative commons license records
+    # str_detect(license, "http://creativecommons.org/") &
+    # # no records before 1965
+    decade >= 1970 &
+    # no records after 2015 (there is not a lot of data yet)
+    decade < 2020) %>%
   # retain only relevant variables
-  dplyr::select(decimalLongitude, decimalLatitude, decade)
+  # (note: select is a name conflict between the raster package the dplyr.
+  # I am therefore explicitly calling dplyr::select here)
+  dplyr::select(decimalLongitude, decimalLatitude, decade) %>%
+  # sort by decade
+  arrange(decade)
 
 ```
 
@@ -154,11 +164,11 @@ TODO: enter xkcd reference and a good link
 proj_latlon <- CRS("+proj=longlat +datum=WGS84 +ellps=WGS84 +towgs84=0,0,0")
 proj_ukgrid <- CRS("+init=epsg:27700")
 
-birds_spatial <- birds_nested %>%
+birds_nested <- birds_nested %>%
   # make records into spatial points
   mutate(points = map(
     .x = data, 
-    .f = function(x) {SpatialPoints(coords = x, proj4string = proj_latlon)} %>%
+    .f = ~ SpatialPoints(coords = .x, proj4string = proj_latlon) %>%
       # reproject spatial points to the UK grid
       # (this is so it matches our climate data)
       spTransform(CRSobj = proj_ukgrid)))
@@ -166,132 +176,114 @@ birds_spatial <- birds_nested %>%
 ```
 
 
+We also need climate data for our analysis. I have prepared this separately
+based on a dataset provided by the UK Met Office. It is nested in the same way
+as the bird data (although I admit that nesting weather seems slighly less
+straight forward than nesting birds).
+
 TODO: should include reference to this course:
 https://www.datacamp.com/courses/spatial-analysis-in-r-with-sf-and-raster
 
 ```{r}
 
 # read raster data
-data_climate_bydecade <- read_rds(here::here("data/ukcp09_stacked_rasters.rds"))
-
-
-# EDA ==========================================================================
+climate_nested <- read_rds(here::here("data/ukcp09_stacked_rasters.rds"))
 
 # TODO:
-# should use same scale
+# plots should use same scale
 # could do a cheeky gganimate here
 # 1970
-plot(data_climate_bydecade$raster_stacks[[1]])
+plot(climate_nested$raster_stacks[[1]])
 #2010
-plot(data_climate_bydecade$raster_stacks[[5]])
-
-# pick raster cells at random
-raster_random_sample <- function(x, y) {
-  raster::sampleRandom(
-    x = x, 
-    size = length(y) * 5,
-    cells = TRUE,
-    na.rm = TRUE,
-    asRaster = FALSE,
-    sp = FALSE) %>% 
-    as_data_frame()}
-
-# combine climate and bird data
-df_presence <- data_birds_bydecade %>%
-  mutate(
-    presence = 1,
-    climate =  map2(
-      .x = data_climate_bydecade$raster_stacks,
-      .y = data_birds_bydecade$points,
-      .f = function(x, y) {raster::extract(x, y) %>% as_data_frame()}
-    )
-  )
-
-# helper function to extract lat and lon from cell id
-get_latlon_from_raster <- function(x, y) {
-  xyFromCell(
-    object = x,
-    cell = y$cell,
-    spatial = TRUE) %>%
-    spTransform(proj_latlon) %>%
-    coordinates() %>%
-    as_data_frame() %>%
-    transmute(
-      decimalLongitude = x,
-      decimalLatitude = y)
-}
-
-# draw random sample from climate data with similar
-# temporal distribution to the bird data
-df_nopresence <- data_birds_bydecade %>%
-  mutate(
-    presence = 0,
-    climate = map2(
-      .x = data_climate_bydecade$raster_stacks,
-      .y = points,
-      .f = raster_random_sample),
-    # get coordinates of the random sample
-    data = map2(
-      .x = data_climate_bydecade$raster_stacks,
-      .y = climate,
-      .f = get_latlon_from_raster),
-    # remove the now superfluous cell column from climate data
-    climate = map(.x = climate, .f = function(x) {x %>% select(-cell)})
-  )
-
-
-df <- bind_rows(df_presence, df_nopresence) %>%
-  # discard spatial points
-  select(-points) %>%
-  # get into modelling format
-  unnest()
-
+plot(climate_nested$raster_stacks[[5]])
 
 ```
 
 
-
 ```{r}
 
-# for reproducibility
-set.seed(12345)
+# check that the two datasets match up
+stopifnot(all(climate_nested$decade == birds_nested$decade))
 
-# true temporal split as holdout
-# TODO: should be stratified by presence / absence
-df_modelling <- df[df$decade != "2010",]
-df_holdout <- df[df$decade == "2010",]
+# combine climate and bird data
+locs_withbirds <- data_frame(
+  decade = birds_nested$decade,
+  presence = 1,
+  climate =  map2(
+    .x = climate_nested$raster_stacks,
+    .y = birds_nested$points,
+    .f = ~ as_data_frame(raster::extract(.x, .y))))
 
-df_train <- df_modelling %>%
-  select(-decade, -decimalLongitude, -decimalLatitude) %>%
+
+# get number of records per decade
+n_points <- map_dbl(.x = birds_nested$data, .f = nrow)
+# create a random sample from the rasters to use as absence data
+locs_nobirds <- data_frame(
+  decade = birds_nested$decade,
+  presence = 0,
+  # draw random sample from climate data
+  climate = map2(
+    .x = climate_nested$raster_stacks,
+    .y = n_points * 5,
+    .f = ~ as_tibble(sampleRandom(.x, size = .y, cells = FALSE))))
+
+# combine the two datasets
+df <- bind_rows(locs_withbirds, locs_nobirds) %>%
+  # get into modelling format
+  unnest()
+
+head(df)
+```
+
+
+
+```{r train_test_split}
+
+# last pre-processing step
+df <- df %>%
+  # caret requires a factorial response variable for classification
   mutate(presence = case_when(
     presence == 1 ~ "presence",
     presence == 0 ~ "absence") %>%
     factor()) %>%
-  na.omit()
-df_test <- df_holdout %>%
-  select(-decade, -decimalLongitude, -decimalLatitude) %>%
-  mutate(presence = case_when(
-    presence == 1 ~ "presence",
-    presence == 0 ~ "absence") %>%
-      factor()) %>%
+  # drop all observations with NA variables
   na.omit()
 
-# CARET
+df_train <- df %>%
+  # true temporal split as holdout
+  filter(decade != "2010") %>%
+  # drop decade, it's not needed anymore
+  dplyr::select(-decade)
+
+# same steps for test set
+df_test <- df %>%
+  filter(decade == "2010") %>%
+  dplyr::select(-decade)
+
+```
+
+
+```{r model_fitting}
+# for reproducibility
+set.seed(12345)
+
+# set up model fitting parameters
+# tuning grid, trying every possible combination
 tuneGrid <- expand.grid(
-  alpha = seq(0, 1, length = 6),
-  lambda = 10 ** seq(-1, -10, by = -.25))
+  mtry = c(6, 9, 12, 16),
+  coefReg = c(.4, .6, .8, 1))
 tuneControl <- trainControl(
   method = 'repeatedcv',
   classProbs = TRUE,
   number = 10,
-  repeats = 5,
-  verboseIter = FALSE,
+  repeats = 1,
+  verboseIter = TRUE,
   summaryFunction = twoClassSummary)
-
+# actual model build
 model_fit <- train(
   presence ~ .,
   data = df_train,
-  method = "glmnet",
+  method = "RRFglobal",
   family = "binomial",
   metric = "ROC",
   tuneGrid = tuneGrid,
@@ -299,25 +291,27 @@ model_fit <- train(
 
 plot(model_fit)
 
-# combine prediction with validation set
-df_eval <- predict(
-  object = model_fit,
-  newdata = df_test,
-  type = "prob") %>%
-  pull(1) %>%
-  cbind(
-    "pred" = ., 
-    "obs" = as.numeric(df_test$presence) - 1)
+```
 
+
+```{r model_evaluation}
+
+# combine prediction with validation set
 df_eval <- data_frame(
-  pred = predict(object = model_fit, newdata = df_test, type = "prob")[,1],
-  obs = (as.numeric(df_test$presence) - 1) %>% factor()
-)
+  "obs" = df_test$presence,
+  "pred" = predict(
+    object = model_fit,
+    newdata = df_test,
+    type = "prob") %>%
+    pull(1))
 
 # get ROC value
 roc_auc_vec(estimator = "binary", truth = df_eval$obs, estimate = df_eval$pred)
 
-predict(object = model_fit, newdata = df_test, type = "prob")[,1]
+```
+
+
+```{r model_prediction}
 
 # generate raster prediction
 make_pred_raster <- function(climate_raster_stack) {
@@ -325,28 +319,30 @@ make_pred_raster <- function(climate_raster_stack) {
   X <- climate_raster_stack %>% 
     as.data.frame()
   # calculate modelled probabilities
-  pred_values <- predict(object = model_fit, 
-                         newdata = X[complete.cases(X), ],
-                         type = "prob") %>%
-    pull(1)
-  
+  pred_values <- predict(
+    object = model_fit,
+    newdata = X[complete.cases(X), ],
+    type = "prob") %>%
+    pull("presence")
   # copy raster from climate data
   raster_prediction <- climate_raster_stack[[1]]
   # overwrite all values
   raster_prediction@data@values <- NA
   # copy prediction values
   raster_prediction@data@values[complete.cases(X)] <- pred_values
-  
   return(raster_prediction)
 }
 
-
-plot_prediction <- function(x) {
-  x %>%
+# generate plot of spatial prediction
+plot_prediction <- function(raster) {
+  raster %>%
+    # SpatialPixelDataFrame works well with ggplot
     as("SpatialPixelsDataFrame") %>%
     as_data_frame() %>%
     set_colnames(c("Probability", "lon", "lat")) %>%
-    ggplot(aes(x = lon, y = lat, fill = Probability)) +  
+    ggplot(aes(x = lon, y = lat, fill = Probability)) + 
+    # good colour palette for colour blind people
+    scale_fill_viridis(option = "A") +
     geom_tile() +
     coord_equal() +
     theme_map() +
@@ -356,15 +352,22 @@ plot_prediction <- function(x) {
 prediction <- data_climate_bydecade %>%
   mutate(
     prediction = map(.x = raster_stacks, .f = make_pred_raster),
-    plot = map(.x = prediction, .f = plot_prediction)
-  )
+    plot = map(.x = prediction, .f = plot_prediction))
+
+plot(prediction$plot[[5]])
 
 # TODO:
 # could make this into faceted ggplot instead
 
+```
 
 
+gganimate info in appendix here:
+https://www.kaggle.com/bigironsphere/did-drought-cause-the-war-in-syria-an-r-tutorial
 
+```{r}
+
+r2tile
 
 
 ```
