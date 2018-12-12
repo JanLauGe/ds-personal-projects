@@ -5,9 +5,7 @@ output: html_notebook
 
 TODO: We all knew birds nest but who knew that data frames nest, too?
 
-This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
 
-Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
 
 ```{r setup, message=FALSE}
 library(here)
@@ -17,16 +15,18 @@ library(stringr)
 library(lubridate)
 
 library(rgbif)
-
 library(sp)
 library(rgdal)
 library(raster)
-library(rasterVis)
 
 library(tidymodels)
-library(randomForest)
-library(RRF)
+library(glmnet)
 library(caret)
+
+library(rasterVis)
+library(viridis)
+library(ggthemes)
+library(gganimate)
 
 ```
 
@@ -96,9 +96,7 @@ on each record. Here, I will exclude those that
 ```{r data cleaning}
 # look at a random sub-sample of the data (100 rows)
 # we can see there is a lot of information on each record!
-gbif_response$data %>%
-  sample_n(100) %>% 
-  View()
+gbif_response$data %>% sample_n(100)
 
 birds_clean <- gbif_response$data %>%
   # get decade of record from eventDate
@@ -109,13 +107,11 @@ birds_clean <- gbif_response$data %>%
            as.numeric()) %>%
   # clean data using metadata filters
   filter(
-    # # only classified as present
-    # occurrenceStatus == "present" &
-    # # only records with no issues
-    # issues == "" &
-    # # only creative commons license records
-    # str_detect(license, "http://creativecommons.org/") &
-    # # no records before 1965
+    # only records with no issues
+    issues == "" &
+    # only creative commons license records
+    str_detect(license, "http://creativecommons.org/") &
+    # no records before 1965
     decade >= 1970 &
     # no records after 2015 (there is not a lot of data yet)
     decade < 2020) %>%
@@ -181,26 +177,23 @@ based on a dataset provided by the UK Met Office. It is nested in the same way
 as the bird data (although I admit that nesting weather seems slighly less
 straight forward than nesting birds).
 
-TODO: should include reference to this course:
-https://www.datacamp.com/courses/spatial-analysis-in-r-with-sf-and-raster
+If you would like to learn more about raster data and how to work with it you
+can check out the [datacamp course on spatial analysis in R](https://www.datacamp.com/courses/spatial-analysis-in-r-with-sf-and-raster)
 
 ```{r}
 
 # read raster data
 climate_nested <- read_rds(here::here("data/ukcp09_stacked_rasters.rds"))
-
-# TODO:
-# plots should use same scale
-# could do a cheeky gganimate here
-# 1970
+# plot 1970
 plot(climate_nested$raster_stacks[[1]])
-#2010
-plot(climate_nested$raster_stacks[[5]])
-
-
 
 ```
 
+
+For our purpose of model fitting we will combine the corresponding bird 
+and climate datasets by joining them together using decade. This allows us to
+subsequently extract the climatic conditions at a location that the bird was
+observed at, in the decade that it was observed.
 
 ```{r}
 
@@ -215,7 +208,6 @@ locs_withbirds <- data_frame(
     .x = climate_nested$raster_stacks,
     .y = birds_nested$points,
     .f = ~ as_data_frame(raster::extract(.x, .y))))
-
 
 # get number of records per decade
 n_points <- map_dbl(.x = birds_nested$data, .f = nrow)
@@ -236,6 +228,7 @@ df_nested <- bind_rows(locs_withbirds, locs_nobirds) %>%
   nest()
 
 df_nested
+
 ```
 
 
@@ -254,6 +247,7 @@ df_modelling <- df_nested %>%
   # drop all observations with NA variables
   na.omit()
 
+# create a training set for the model build
 df_train <- df_modelling %>%
   # true temporal split as holdout
   filter(decade != "2010") %>%
@@ -359,30 +353,11 @@ df_eval <- df_modelling %>%
       ~ predict(model_fit, newdata = .x, type = "prob") %>% pull("presence"))
     )
 
-df_eval %>%
-  dplyr::select(decade, climate_data, habitat_suitability) %>% unnest() %>%
-  ggplot(aes(x = x, y = y, fill = habitat_suitability)) +
-  geom_tile() + #facet_wrap(~ decade) +
-  # good colour palette for colour blind people
-  scale_fill_viridis(option = "A") +
-  coord_equal() +
-  theme_map() +
-  theme(legend.position = "bottom") +
-  # animate plot, morphing through decades
-  transition_states(
-    states = decade,
-    transition_length = .5,
-    state_length = 3) +
-  labs(title = 'Habitat Suitability per Decade',
-      #gganimate: animate subtitle
-      #subtitle = 'Decade: {frame_time}',
-      caption = 'Source: GBIF data and MetOffice UK climate data',
-      fill = 'Habitat Suitability [0 low - high 1]')
 
 ```
 
 
-```{r}
+```{r create_animation}
 
 # code to remove cells with missing values in any decade
 no_na_data <- df_eval %>%
@@ -398,10 +373,27 @@ no_na_data <- df_eval %>%
   dplyr::select(x, y, data) %>%
   unnest()
 
-no_na_data %>%
+hs_animation <- no_na_data %>%
+  dplyr::select(x, y, decade, habitat_suitability) %>%
   gather(key = "variable", value = "value", -x, -y, -decade) %>%
+  filter(variable == "habitat_suitability") %>%
+  # plot data
   ggplot(aes(x = x, y = y, fill = value)) +
   geom_tile() +
-  facet_wrap(~ variable, scales="free")
+  # good colour palette for colour blind people
+  scale_fill_viridis(option = "A") +
+  coord_equal() +
+  theme_map() +
+  theme(legend.position = "bottom") +
+  # animate plot, morphing through decades
+  transition_states(
+    states = decade,
+    transition_length = 5,
+    state_length = 2) +
+  labs(title = 'Habitat Suitability per Decade',
+    # gganimate: animate subtitle
+    subtitle = 'Decade: {closest_state}',
+    caption = 'Source:\nGBIF data and\nMetOffice UK climate data',
+    fill = 'Habitat Suitability [0 low - high 1]')
 
 ```
