@@ -189,6 +189,42 @@ plot(climate_nested$raster_stacks[[1]])
 
 ```
 
+```{r}
+
+# ggplot raster
+clim <- climate_nested$raster_stacks[[4]] %>%
+  as("SpatialPixelsDataFrame") %>%
+  as_data_frame() %>%
+  na.omit() %>%
+  gather(key = "variable", value = "value", -x, -y) %>%
+  group_by(variable) %>%
+  nest()
+
+plot_clim <- function(df, var) {
+  df %>%
+    ggplot(aes(x = x, y = y, fill = value)) +
+    geom_tile() +
+    scale_fill_distiller(palette = "Spectral") + 
+    coord_equal() +
+    theme_map() +
+    theme(legend.position = "bottom") +
+    labs(title = var, caption = 'Source: MetOffice UK climate data')
+  }
+
+clim2 <- mutate(clim, plots = map2(.x = data, .y = variable, .f = plot_clim))
+clim2$plots[[1]]
+x <- gridExtra::grid.arrange(grobs = clim2$plots)
+
+ggsave(
+  plot = x, 
+  filename = "02_climate_plot.png", 
+  device = "png",
+  width = 12, 
+  height = 18, 
+  scale = 1, 
+  dpi = 150)
+
+```
 
 For our purpose of model fitting we will combine the corresponding bird 
 and climate datasets by joining them together using decade. This allows us to
@@ -274,8 +310,8 @@ set.seed(12345)
 # set up model fitting parameters
 # tuning grid, trying every possible combination
 tuneGrid <- expand.grid(
-  alpha = seq(0, 1, length = 6),
-  lambda = c(0.05))
+  alpha = seq(0, 1, length = 5),
+  lambda = c(.001, .003, .01, .03, .1, .3))
 tuneControl <- trainControl(
   method = 'repeatedcv',
   classProbs = TRUE,
@@ -298,8 +334,39 @@ plot(model_fit)
 
 ```
 
+```{r model_fitting}
+# for reproducibility
+set.seed(12345)
+library(RRF)
+# set up model fitting parameters
+# tuning grid, trying every possible combination
+tuneGrid <- expand.grid(
+  mtry = c(3, 6, 9),
+  coefReg = c(.01, .03, .1, .3, .7, 1),
+  coefImp = c(.0, .1, .3, .6, 1))
+tuneControl <- trainControl(
+  method = 'repeatedcv',
+  classProbs = TRUE,
+  number = 10,
+  repeats = 2,
+  verboseIter = TRUE,
+  summaryFunction = twoClassSummary)
+# actual model build
+model_fit <- train(
+  presence ~ .,
+  data = df_train,
+  method = "RRF",
+  metric = "ROC",
+  tuneGrid = tuneGrid,
+  trControl = tuneControl)
 
-We can evaluate this model using the Area under the Receiver Operator 
+
+plot(model_fit)
+
+```
+
+We can evaluate the performance of this model on our hold-out data from 2010.
+Just as uring training we are using the Area under the Receiver Operator 
 Characteristic curve (AUC). With this metric, a model no bettern than random
 would score 0.5 while a perfect model making no mistakes would score 1.
 
@@ -320,7 +387,20 @@ roc_auc_vec(estimator = "binary", truth = df_eval$obs, estimate = df_eval$pred)
 ```
 
 
-That is a pretty good result!
+That is a pretty good result! 
+
+```{r}
+
+model_fit <- update(
+  object = model_fit,
+  param = list(mtry = 6, coefReg = 0, coefImp = .6))
+
+```
+
+
+Now we can combine the raw data, model performance, and predictions all in one
+nested dataframe. We can save this for later to make sure we always know what
+data was used to build which model.
 
 ```{r model_prediction}
 
@@ -353,13 +433,15 @@ df_eval <- df_modelling %>%
       ~ predict(model_fit, newdata = .x, type = "prob") %>% pull("presence"))
     )
 
+df_eval
 
 ```
 
 
 ```{r create_animation}
 
-# code to remove cells with missing values in any decade
+# remove cells with missing values in any decade
+# (otherwise mismatch causes animation glitches)
 no_na_data <- df_eval %>%
   dplyr::select(decade, climate_data, habitat_suitability) %>% 
   # change nesting
@@ -373,6 +455,7 @@ no_na_data <- df_eval %>%
   dplyr::select(x, y, data) %>%
   unnest()
 
+# create animation cycling through decades
 hs_animation <- no_na_data %>%
   dplyr::select(x, y, decade, habitat_suitability) %>%
   gather(key = "variable", value = "value", -x, -y, -decade) %>%
@@ -396,4 +479,5 @@ hs_animation <- no_na_data %>%
     caption = 'Source:\nGBIF data and\nMetOffice UK climate data',
     fill = 'Habitat Suitability [0 low - high 1]')
 
+hs_animation
 ```
