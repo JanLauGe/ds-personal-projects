@@ -23,9 +23,10 @@ analysis_homecredit_defaultrisk/data/
 
 #### R files -------------------------------------------------------------------
 *.RProj
-.Rproj.user
-.Rapp.history
-.RData
+*.Rproj.user
+*.Rapp.history
+*.Rhistory
+*.RData
 
 # Example code in package build process
 *-Ex.R
