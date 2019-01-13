@@ -4,7 +4,7 @@
 #### Project folders
 data
 data/*
-analysis_homecredit_defaultrisk/data/
+*/data/*
 
 #### Data files
 *.zip
@@ -25,8 +25,9 @@ analysis_homecredit_defaultrisk/data/
 *.RProj
 *.Rproj.user
 *.Rapp.history
-*.Rhistory
 *.RData
+*.Rhistory
+.Rhistory
 
 # Example code in package build process
 *-Ex.R
@@ -128,3 +129,4 @@ celerybeat-schedule
 
 /site
 .mypy_cache/
+.Rproj.user
