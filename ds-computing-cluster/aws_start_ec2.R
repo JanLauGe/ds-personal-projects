@@ -29,13 +29,6 @@ launch_ec2_instance <- function(
   aws_ami,
   aws_type = "t2.micro"
 ) {
-  # Check your VPC and Security Group settings
-  aws_subnets <- describe_subnets()
-  aws_sgroup <- create_sgroup(
-    name = "tmp_ec2_r_myip_security_group", 
-    description = "Allow my current IP", 
-    vpc = aws_subnets[[1L]])
-  
   # use existing ip address or create a new one
   ips <- describe_ips()
   if (!length(ips)) {
@@ -43,6 +36,13 @@ launch_ec2_instance <- function(
   }
   s <- describe_subnets()
   g <- describe_sgroups()
+  
+  # Check your VPC and Security Group settings
+  aws_subnets <- describe_subnets()
+  aws_sgroup <- create_sgroup(
+    name = paste0("tmp_ec2_sg_localip_", ips[[1L]]["publicIp"]), 
+    description = paste0("Allow my current IP: ", ips[[1L]]["publicIp"]),
+    vpc = aws_subnets[[1L]])
   
   # Launch the instance using appropriate settings
   aws_instance <- run_instances(
@@ -138,7 +138,7 @@ con <- ssh_connect(host = paste(username, ec2ip, sep = "@"))
 
 # start remoter::server on instance
 random_tmp_password <- generate_password()
-r_exe_start_remoter <- str_c(
+r_cmd_start_remoter <- str_c(
   "sudo Rscript -e ",
   "'remoter::server(",
   "port = 55555, ",
@@ -147,9 +147,14 @@ r_exe_start_remoter <- str_c(
   collapse = "") %>%
   str_replace("%pwd", str_c('"', random_tmp_password, '"'))
 
-ssh_exec_wait(
-  session = con, 
-  command = r_exe_start_remoter)
+# connect and execute
+plan(multicore)
+x <- future(
+  ssh_exec_wait(
+    session = con, 
+    command = r_cmd_start_remoter))
+
+ssh_disconnect(con)
 
 
 # connect via remoter ----------------------------------------------------------
