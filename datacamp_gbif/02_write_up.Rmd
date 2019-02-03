@@ -393,7 +393,7 @@ That is a pretty good result!
 
 model_fit <- update(
   object = model_fit,
-  param = list(mtry = 6, coefReg = 0, coefImp = .6))
+  param = list(alpha = 0, lambda = .1))
 
 ```
 

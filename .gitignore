@@ -2,7 +2,6 @@
 .DS_Store
 
 #### Project folders
-data
 data/*
 */data/*
 
@@ -16,9 +15,9 @@ data/*
 *.rds
 
 #### Key files
-.ssh
-.kaggle
-.google
+*.ssh
+*.kaggle
+*.google
 
 
 #### R files -------------------------------------------------------------------
@@ -27,7 +26,7 @@ data/*
 *.Rapp.history
 *.RData
 *.Rhistory
-.Rhistory
+*.Rhistory
 
 # Example code in package build process
 *-Ex.R
