@@ -1,6 +1,7 @@
 
 #devtools::install_github("cloudyr/aws.ec2")
 library(aws.ec2)
+library(future)
 library(ssh)
 library(remoter)
 library(tidyverse)
@@ -29,27 +30,27 @@ launch_ec2_instance <- function(
   aws_ami,
   aws_type = "t2.micro"
 ) {
+  # datetime stamp
+  datetime <- Sys.time() %>% str_to_lower() %>% str_replace_all("[-:\\s]", "_")
   # use existing ip address or create a new one
   ips <- describe_ips()
   if (!length(ips)) {
     ips[[1L]] <- allocate_ip("vpc")
   }
-  s <- describe_subnets()
-  g <- describe_sgroups()
-  
+
   # Check your VPC and Security Group settings
   aws_subnets <- describe_subnets()
-  aws_sgroup <- create_sgroup(
-    name = paste0("tmp_ec2_sg_localip_", ips[[1L]]["publicIp"]), 
-    description = paste0("Allow my current IP: ", ips[[1L]]["publicIp"]),
+  aws_sgroup <-create_sgroup(
+    name = paste0("tmp_ec2_sg_localip", datetime),
+    description = paste0("Allow my current IP"),
     vpc = aws_subnets[[1L]])
   
   # Launch the instance using appropriate settings
   aws_instance <- run_instances(
     image = aws_ami, 
     type = aws_type,
-    subnet = s[[1]], 
-    sgroup = g[[1]])
+    subnet = aws_subnets[[1]], 
+    sgroup = aws_sgroup[[1]])
   Sys.sleep(20L) # wait for instance to boot
   
   # associate IP address with instance
@@ -154,8 +155,6 @@ x <- future(
     session = con, 
     command = r_cmd_start_remoter))
 
-ssh_disconnect(con)
-
 
 # connect via remoter ----------------------------------------------------------
 
@@ -163,7 +162,7 @@ remoter::client(
   addr = ec2ip, 
   port = 55555,
   password = random_tmp_password,
-  prompt = "remoter")
+  prompt = "remote")
 
 ### YOUR CODE COES HERE...
 
@@ -173,7 +172,9 @@ remoter::client(
 
 # Only if still on remoter:
 shutdown()
+ssh_disconnect(con)
 
 # save all your work before doing this!
+# shuts down ec2 instance and deletes temporary security group
 terminate_and_cleanup(ec2info)
 
