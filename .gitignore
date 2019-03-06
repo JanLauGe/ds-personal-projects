@@ -2,26 +2,31 @@
 .DS_Store
 
 #### Project folders
-# data
-# data/*
-analysis_homecredit_defaultrisk/data/
+data/*
+*/data/*
 
 #### Data files
-# *.csv
-# *.tsv
-# *.jpg
+*.zip
+*.csv
+*.tsv
+*.sav
+*.jpg
+*.Rdata
+*.rds
 
 #### Key files
-.ssh
-.kaggle
-.google
+*.ssh
+*.kaggle
+*.google
 
 
 #### R files -------------------------------------------------------------------
 *.RProj
-.Rproj.user
-.Rapp.history
-.RData
+*.Rproj.user
+*.Rapp.history
+*.RData
+*.Rhistory
+*.Rhistory
 
 # Example code in package build process
 *-Ex.R
@@ -123,3 +128,4 @@ celerybeat-schedule
 
 /site
 .mypy_cache/
+.Rproj.user
