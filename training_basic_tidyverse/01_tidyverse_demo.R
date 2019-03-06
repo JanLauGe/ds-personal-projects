@@ -284,11 +284,11 @@ library(dplyr.snowflakedb)
 connection_parameters <- c(
   Driver = "/opt/snowflake/snowflakeodbc/lib/universal/libSnowflake.dylib", 
   ACCOUNT = "nmc", 
-  SERVER = "nmc.us-east-1.snowflakecomputing.com", 
-  UID = "ds-ec2", 
-  PWD = , 
-  WAREHOUSE = "MODELPROD_MEDIUM_WH", 
-  DATABASE = "ADHOC_DB", 
+  SERVER = "yourserver", 
+  UID = "youruser", 
+  PWD = "yourpassword", 
+  WAREHOUSE = "yourwarehouse", 
+  DATABASE = "yourdatabase", 
   SCHEMA = "PUBLIC", 
   SSL = "on")
 
