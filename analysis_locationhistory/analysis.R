@@ -74,21 +74,6 @@ sample_n(df, 20)
 
 ### PROGRAMMATIC ---------------------------------------------------------------
 
-# list all files from takeout
-fnames <- fs::dir_ls(
-  path='data/Semantic Location History',
-  type='file',
-  recurse=TRUE)
-
-df = tibble()
-for (fname in fnames) {
-  df <- extract_cntry_from_json(fname) %>%
-    bind_rows(df, .)
-}
-
-
-
-
 # helper function
 get_addr_last_row <- function(string) {
   string %>%
@@ -175,4 +160,19 @@ extract_cntry_from_json <- function(fnames) {
 
 
 
+# list all files from takeout
+fnames <- fs::dir_ls(
+  path='data/Semantic Location History',
+  type='file',
+  recurse=TRUE)
 
+df = tibble()
+for (fname in fnames) {
+  df <- extract_cntry_from_json(fname) %>%
+    bind_rows(df, .)
+}
+
+df %>%
+  group_by(country) %>%
+  summarize(n = n()) %>%
+  arrange(desc(n))
